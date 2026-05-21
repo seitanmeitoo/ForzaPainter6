@@ -355,8 +355,8 @@ class App:
             r, g, b = self._hex_to_rgb(self.bg_color_var.get())
             bg = (r, g, b, 255)
         else:
-            avg = self.source_rgb.reshape(-1, 3).mean(axis=0).astype(int)
-            bg = (int(avg[0]), int(avg[1]), int(avg[2]), 255)
+            median = np.median(self.source_rgb.reshape(-1, 3), axis=0).astype(int)
+            bg = (int(median[0]), int(median[1]), int(median[2]), 255)
         payload, lossy_count = to_fh6_payload(self.shapes_snapshot, (w, h), bg)
         if lossy_count > 0:
             proceed = messagebox.askokcancel(

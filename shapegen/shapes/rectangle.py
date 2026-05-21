@@ -57,12 +57,69 @@ class Rectangle(Shape):
         )
 
     @classmethod
-    def random(cls, rng: random.Random, w: int, h: int) -> "Rectangle":
+    def random(cls, rng: random.Random, w: int, h: int, size_scale: float = 1.0, alpha: int = 128) -> "Rectangle":
         return cls(
-            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), 128),
+            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), alpha),
             x=rng.uniform(0, w - 1), y=rng.uniform(0, h - 1),
-            hw=rng.uniform(1, max(2, w / 8)), hh=rng.uniform(1, max(2, h / 8)),
+            hw=rng.uniform(1, max(2, w / 8) * size_scale),
+            hh=rng.uniform(1, max(2, h / 8) * size_scale),
         )
+
+    PARAM_DIM = 4  # [x, y, hw, hh]
+
+    @classmethod
+    def random_batch(cls, rng: random.Random, w: int, h: int, n: int,
+                     size_scale: float, alpha: int, xp=np):
+        hw_max = max(2.0, w / 8.0) * size_scale
+        hh_max = max(2.0, h / 8.0) * size_scale
+        p = np.empty((n, 4), dtype=np.float32)
+        c = np.empty((n, 4), dtype=np.uint8)
+        for i in range(n):
+            p[i, 0] = rng.uniform(0, w - 1)
+            p[i, 1] = rng.uniform(0, h - 1)
+            p[i, 2] = rng.uniform(1, hw_max)
+            p[i, 3] = rng.uniform(1, hh_max)
+            c[i, 0] = rng.randint(0, 255)
+            c[i, 1] = rng.randint(0, 255)
+            c[i, 2] = rng.randint(0, 255)
+            c[i, 3] = alpha
+        return xp.asarray(p), xp.asarray(c)
+
+    @classmethod
+    def rasterize_batch(cls, params, w: int, h: int, xp=np):
+        x = params[:, 0:1, None]
+        y = params[:, 1:2, None]
+        hw = params[:, 2:3, None]
+        hh = params[:, 3:4, None]
+        xs_grid = xp.arange(w, dtype=xp.float32)[None, None, :]
+        ys_grid = xp.arange(h, dtype=xp.float32)[None, :, None]
+        mask = (xp.abs(xs_grid - x) <= hw) & (xp.abs(ys_grid - y) <= hh)
+        return mask.astype(xp.uint8) * 255
+
+    @classmethod
+    def mutate_batch(cls, best_params, rng: random.Random, w: int, h: int, k: int, xp=np):
+        bp = np.asarray(best_params, dtype=np.float32).reshape(-1)
+        out = np.tile(bp, (k, 1))
+        for i in range(k):
+            which = rng.randint(0, 1)
+            if which == 0:
+                out[i, 0] = _clamp(out[i, 0] + rng.gauss(0, 16), 0, w - 1)
+                out[i, 1] = _clamp(out[i, 1] + rng.gauss(0, 16), 0, h - 1)
+            else:
+                out[i, 2] = _clamp(out[i, 2] + rng.gauss(0, 16), 1, w)
+                out[i, 3] = _clamp(out[i, 3] + rng.gauss(0, 16), 1, h)
+        return xp.asarray(out)
+
+    @classmethod
+    def params_to_instance(cls, params_row, color) -> "Rectangle":
+        return cls(
+            color=tuple(int(c) for c in color),
+            x=float(params_row[0]), y=float(params_row[1]),
+            hw=float(params_row[2]), hh=float(params_row[3]),
+        )
+
+    def to_params_row(self) -> np.ndarray:
+        return np.asarray([self.x, self.y, self.hw, self.hh], dtype=np.float32)
 
 
 _register(Rectangle)
@@ -130,13 +187,82 @@ class RotatedRectangle(Shape):
         )
 
     @classmethod
-    def random(cls, rng: random.Random, w: int, h: int) -> "RotatedRectangle":
+    def random(cls, rng: random.Random, w: int, h: int, size_scale: float = 1.0, alpha: int = 128) -> "RotatedRectangle":
         return cls(
-            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), 128),
+            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), alpha),
             x=rng.uniform(0, w - 1), y=rng.uniform(0, h - 1),
-            hw=rng.uniform(1, max(2, w / 8)), hh=rng.uniform(1, max(2, h / 8)),
+            hw=rng.uniform(1, max(2, w / 8) * size_scale),
+            hh=rng.uniform(1, max(2, h / 8) * size_scale),
             angle=rng.uniform(0, 180),
         )
+
+    PARAM_DIM = 5  # [x, y, hw, hh, angle]
+
+    @classmethod
+    def random_batch(cls, rng: random.Random, w: int, h: int, n: int,
+                     size_scale: float, alpha: int, xp=np):
+        hw_max = max(2.0, w / 8.0) * size_scale
+        hh_max = max(2.0, h / 8.0) * size_scale
+        p = np.empty((n, 5), dtype=np.float32)
+        c = np.empty((n, 4), dtype=np.uint8)
+        for i in range(n):
+            p[i, 0] = rng.uniform(0, w - 1)
+            p[i, 1] = rng.uniform(0, h - 1)
+            p[i, 2] = rng.uniform(1, hw_max)
+            p[i, 3] = rng.uniform(1, hh_max)
+            p[i, 4] = rng.uniform(0, 180)
+            c[i, 0] = rng.randint(0, 255)
+            c[i, 1] = rng.randint(0, 255)
+            c[i, 2] = rng.randint(0, 255)
+            c[i, 3] = alpha
+        return xp.asarray(p), xp.asarray(c)
+
+    @classmethod
+    def rasterize_batch(cls, params, w: int, h: int, xp=np):
+        x = params[:, 0:1, None]
+        y = params[:, 1:2, None]
+        hw = params[:, 2:3, None]
+        hh = params[:, 3:4, None]
+        angle = params[:, 4:5, None]
+        rad = angle * (math.pi / 180.0)
+        cos_a = xp.cos(rad)
+        sin_a = xp.sin(rad)
+        xs_grid = xp.arange(w, dtype=xp.float32)[None, None, :]
+        ys_grid = xp.arange(h, dtype=xp.float32)[None, :, None]
+        xg = xs_grid - x
+        yg = ys_grid - y
+        xr = cos_a * xg + sin_a * yg
+        yr = -sin_a * xg + cos_a * yg
+        mask = (xp.abs(xr) <= hw) & (xp.abs(yr) <= hh)
+        return mask.astype(xp.uint8) * 255
+
+    @classmethod
+    def mutate_batch(cls, best_params, rng: random.Random, w: int, h: int, k: int, xp=np):
+        bp = np.asarray(best_params, dtype=np.float32).reshape(-1)
+        out = np.tile(bp, (k, 1))
+        for i in range(k):
+            which = rng.randint(0, 2)
+            if which == 0:
+                out[i, 0] = _clamp(out[i, 0] + rng.gauss(0, 16), 0, w - 1)
+                out[i, 1] = _clamp(out[i, 1] + rng.gauss(0, 16), 0, h - 1)
+            elif which == 1:
+                out[i, 2] = _clamp(out[i, 2] + rng.gauss(0, 16), 1, w)
+                out[i, 3] = _clamp(out[i, 3] + rng.gauss(0, 16), 1, h)
+            else:
+                out[i, 4] = (out[i, 4] + rng.gauss(0, 25)) % 180.0
+        return xp.asarray(out)
+
+    @classmethod
+    def params_to_instance(cls, params_row, color) -> "RotatedRectangle":
+        return cls(
+            color=tuple(int(c) for c in color),
+            x=float(params_row[0]), y=float(params_row[1]),
+            hw=float(params_row[2]), hh=float(params_row[3]),
+            angle=float(params_row[4]),
+        )
+
+    def to_params_row(self) -> np.ndarray:
+        return np.asarray([self.x, self.y, self.hw, self.hh, self.angle], dtype=np.float32)
 
 
 _register(RotatedRectangle)
