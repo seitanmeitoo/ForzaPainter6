@@ -58,10 +58,88 @@ class Shape(ABC):
         return new
 
 
-def random_shape(rng: random.Random, w: int, h: int, allowed_types: list[ShapeType]) -> Shape:
+def random_shape(
+    rng: random.Random,
+    w: int,
+    h: int,
+    allowed_types: list[ShapeType],
+    size_scale: float = 1.0,
+    alpha: int = 128,
+) -> Shape:
     type_name = rng.choice(allowed_types)
     cls = SHAPE_REGISTRY[type_name]
-    return cls.random(rng, w, h)
+    return cls.random(rng, w, h, size_scale=size_scale, alpha=alpha)
+
+
+def random_shape_batch(
+    rng: random.Random,
+    w: int,
+    h: int,
+    allowed_types: list[ShapeType],
+    n: int,
+    size_scale: float,
+    alpha: int,
+    xp=np,
+):
+    """Répartit N candidats sur les types autorisés et renvoie:
+      - batches: list[(cls, params_xp, colors_xp)] — params shape (n_i, K_dim), colors (n_i, 4)
+      - type_offsets: list[int] de longueur len(batches)+1, où batches[i] couvre
+                      les indices [type_offsets[i], type_offsets[i+1]) dans le batch concaténé.
+
+    Reproduit la distribution rng.choice du chemin séquentiel : les comptes par
+    type sont random.Random.choices() — pas une répartition strictement uniforme.
+    """
+    if n <= 0 or not allowed_types:
+        return [], [0]
+    type_counts: dict[str, int] = {t: 0 for t in allowed_types}
+    for _ in range(n):
+        type_counts[rng.choice(allowed_types)] += 1
+    batches = []
+    offsets = [0]
+    for t in allowed_types:
+        cnt = type_counts[t]
+        if cnt == 0:
+            continue
+        cls = SHAPE_REGISTRY[t]
+        params, colors = cls.random_batch(rng, w, h, cnt, size_scale, alpha, xp=xp)
+        batches.append((cls, params, colors))
+        offsets.append(offsets[-1] + cnt)
+    return batches, offsets
+
+
+def rasterize_batch_multi(batches, w: int, h: int, xp=np):
+    """Rasterise chaque sous-batch (un par type) et concatène les masks
+    en (N_total, H, W) uint8."""
+    if not batches:
+        return xp.zeros((0, h, w), dtype=xp.uint8)
+    parts = []
+    for cls, params, _ in batches:
+        parts.append(cls.rasterize_batch(params, w, h, xp=xp))
+    if len(parts) == 1:
+        return parts[0]
+    return xp.concatenate(parts, axis=0)
+
+
+def concat_colors(batches, xp=np):
+    """Concatène les couleurs des sous-batches en (N_total, 4) uint8."""
+    if not batches:
+        return xp.zeros((0, 4), dtype=xp.uint8)
+    cs = [colors for _, _, colors in batches]
+    if len(cs) == 1:
+        return cs[0]
+    return xp.concatenate(cs, axis=0)
+
+
+def locate_batch_index(batches, type_offsets, idx: int):
+    """À partir d'un index global dans le batch concaténé, renvoie
+    (cls, params_row_xp, color_row_xp) — le row vit toujours sur xp."""
+    for i, (cls, params, colors) in enumerate(batches):
+        start = type_offsets[i]
+        end = type_offsets[i + 1]
+        if start <= idx < end:
+            local = idx - start
+            return cls, params[local], colors[local]
+    raise IndexError(f"idx {idx} out of range for batches of total {type_offsets[-1]}")
 
 
 def shape_from_json(data: dict) -> Shape:
