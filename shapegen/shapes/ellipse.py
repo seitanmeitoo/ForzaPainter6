@@ -67,12 +67,76 @@ class Ellipse(Shape):
         )
 
     @classmethod
-    def random(cls, rng: random.Random, w: int, h: int) -> "Ellipse":
+    def random(cls, rng: random.Random, w: int, h: int, size_scale: float = 1.0, alpha: int = 128) -> "Ellipse":
         return cls(
-            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), 128),
+            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), alpha),
             x=rng.uniform(0, w - 1), y=rng.uniform(0, h - 1),
-            rx=rng.uniform(1, max(2, w / 8)), ry=rng.uniform(1, max(2, h / 8)),
+            rx=rng.uniform(1, max(2, w / 8) * size_scale),
+            ry=rng.uniform(1, max(2, h / 8) * size_scale),
         )
+
+    PARAM_DIM = 4  # [x, y, rx, ry]
+
+    @classmethod
+    def random_batch(cls, rng: random.Random, w: int, h: int, n: int,
+                     size_scale: float, alpha: int, xp=np):
+        rx_max = max(2.0, w / 8.0) * size_scale
+        ry_max = max(2.0, h / 8.0) * size_scale
+        p = np.empty((n, 4), dtype=np.float32)
+        c = np.empty((n, 4), dtype=np.uint8)
+        for i in range(n):
+            p[i, 0] = rng.uniform(0, w - 1)
+            p[i, 1] = rng.uniform(0, h - 1)
+            p[i, 2] = rng.uniform(1, rx_max)
+            p[i, 3] = rng.uniform(1, ry_max)
+            c[i, 0] = rng.randint(0, 255)
+            c[i, 1] = rng.randint(0, 255)
+            c[i, 2] = rng.randint(0, 255)
+            c[i, 3] = alpha
+        return xp.asarray(p), xp.asarray(c)
+
+    @classmethod
+    def rasterize_batch(cls, params, w: int, h: int, xp=np):
+        x = params[:, 0:1, None]
+        y = params[:, 1:2, None]
+        rx = params[:, 2:3, None]
+        ry = params[:, 3:4, None]
+        xs_grid = xp.arange(w, dtype=xp.float32)[None, None, :]
+        ys_grid = xp.arange(h, dtype=xp.float32)[None, :, None]
+        dx = (xs_grid - x) / xp.maximum(rx, 1e-6)
+        dy = (ys_grid - y) / xp.maximum(ry, 1e-6)
+        mask = (dx * dx + dy * dy) <= 1.0
+        return mask.astype(xp.uint8) * 255
+
+    @classmethod
+    def mutate_batch(cls, best_params, rng: random.Random, w: int, h: int, k: int, xp=np):
+        bp = np.asarray(best_params, dtype=np.float32).reshape(-1)
+        out = np.tile(bp, (k, 1))
+        for i in range(k):
+            which = rng.randint(0, 2)
+            if which == 0:
+                out[i, 0] = _clamp(out[i, 0] + rng.gauss(0, 16), 0, w - 1)
+                out[i, 1] = _clamp(out[i, 1] + rng.gauss(0, 16), 0, h - 1)
+            elif which == 1:
+                out[i, 2] = _clamp(out[i, 2] + rng.gauss(0, 16), 1, w)
+                out[i, 3] = _clamp(out[i, 3] + rng.gauss(0, 16), 1, h)
+            else:
+                out[i, 0] = _clamp(out[i, 0] + rng.gauss(0, 8), 0, w - 1)
+                out[i, 1] = _clamp(out[i, 1] + rng.gauss(0, 8), 0, h - 1)
+                out[i, 2] = _clamp(out[i, 2] + rng.gauss(0, 8), 1, w)
+                out[i, 3] = _clamp(out[i, 3] + rng.gauss(0, 8), 1, h)
+        return xp.asarray(out)
+
+    @classmethod
+    def params_to_instance(cls, params_row, color) -> "Ellipse":
+        return cls(
+            color=tuple(int(c) for c in color),
+            x=float(params_row[0]), y=float(params_row[1]),
+            rx=float(params_row[2]), ry=float(params_row[3]),
+        )
+
+    def to_params_row(self) -> np.ndarray:
+        return np.asarray([self.x, self.y, self.rx, self.ry], dtype=np.float32)
 
 
 _register(Ellipse)
@@ -146,13 +210,88 @@ class RotatedEllipse(Shape):
         )
 
     @classmethod
-    def random(cls, rng: random.Random, w: int, h: int) -> "RotatedEllipse":
+    def random(cls, rng: random.Random, w: int, h: int, size_scale: float = 1.0, alpha: int = 128) -> "RotatedEllipse":
         return cls(
-            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), 128),
+            color=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255), alpha),
             x=rng.uniform(0, w - 1), y=rng.uniform(0, h - 1),
-            rx=rng.uniform(1, max(2, w / 8)), ry=rng.uniform(1, max(2, h / 8)),
+            rx=rng.uniform(1, max(2, w / 8) * size_scale),
+            ry=rng.uniform(1, max(2, h / 8) * size_scale),
             angle=rng.uniform(0, 180),
         )
+
+    PARAM_DIM = 5  # [x, y, rx, ry, angle]
+
+    @classmethod
+    def random_batch(cls, rng: random.Random, w: int, h: int, n: int,
+                     size_scale: float, alpha: int, xp=np):
+        rx_max = max(2.0, w / 8.0) * size_scale
+        ry_max = max(2.0, h / 8.0) * size_scale
+        p = np.empty((n, 5), dtype=np.float32)
+        c = np.empty((n, 4), dtype=np.uint8)
+        for i in range(n):
+            p[i, 0] = rng.uniform(0, w - 1)
+            p[i, 1] = rng.uniform(0, h - 1)
+            p[i, 2] = rng.uniform(1, rx_max)
+            p[i, 3] = rng.uniform(1, ry_max)
+            p[i, 4] = rng.uniform(0, 180)
+            c[i, 0] = rng.randint(0, 255)
+            c[i, 1] = rng.randint(0, 255)
+            c[i, 2] = rng.randint(0, 255)
+            c[i, 3] = alpha
+        return xp.asarray(p), xp.asarray(c)
+
+    @classmethod
+    def rasterize_batch(cls, params, w: int, h: int, xp=np):
+        x = params[:, 0:1, None]
+        y = params[:, 1:2, None]
+        rx = params[:, 2:3, None]
+        ry = params[:, 3:4, None]
+        angle = params[:, 4:5, None]
+        rad = angle * (math.pi / 180.0)
+        cos_a = xp.cos(rad)
+        sin_a = xp.sin(rad)
+        xs_grid = xp.arange(w, dtype=xp.float32)[None, None, :]
+        ys_grid = xp.arange(h, dtype=xp.float32)[None, :, None]
+        xg = xs_grid - x
+        yg = ys_grid - y
+        xr = cos_a * xg + sin_a * yg
+        yr = -sin_a * xg + cos_a * yg
+        dx = xr / xp.maximum(rx, 1e-6)
+        dy = yr / xp.maximum(ry, 1e-6)
+        mask = (dx * dx + dy * dy) <= 1.0
+        return mask.astype(xp.uint8) * 255
+
+    @classmethod
+    def mutate_batch(cls, best_params, rng: random.Random, w: int, h: int, k: int, xp=np):
+        bp = np.asarray(best_params, dtype=np.float32).reshape(-1)
+        out = np.tile(bp, (k, 1))
+        for i in range(k):
+            which = rng.randint(0, 3)
+            if which == 0:
+                out[i, 0] = _clamp(out[i, 0] + rng.gauss(0, 16), 0, w - 1)
+                out[i, 1] = _clamp(out[i, 1] + rng.gauss(0, 16), 0, h - 1)
+            elif which == 1:
+                out[i, 2] = _clamp(out[i, 2] + rng.gauss(0, 16), 1, w)
+                out[i, 3] = _clamp(out[i, 3] + rng.gauss(0, 16), 1, h)
+            elif which == 2:
+                out[i, 4] = (out[i, 4] + rng.gauss(0, 25)) % 180.0
+            else:
+                out[i, 0] = _clamp(out[i, 0] + rng.gauss(0, 8), 0, w - 1)
+                out[i, 1] = _clamp(out[i, 1] + rng.gauss(0, 8), 0, h - 1)
+                out[i, 4] = (out[i, 4] + rng.gauss(0, 15)) % 180.0
+        return xp.asarray(out)
+
+    @classmethod
+    def params_to_instance(cls, params_row, color) -> "RotatedEllipse":
+        return cls(
+            color=tuple(int(c) for c in color),
+            x=float(params_row[0]), y=float(params_row[1]),
+            rx=float(params_row[2]), ry=float(params_row[3]),
+            angle=float(params_row[4]),
+        )
+
+    def to_params_row(self) -> np.ndarray:
+        return np.asarray([self.x, self.y, self.rx, self.ry, self.angle], dtype=np.float32)
 
 
 _register(RotatedEllipse)
