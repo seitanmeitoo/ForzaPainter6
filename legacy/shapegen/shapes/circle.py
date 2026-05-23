@@ -5,7 +5,7 @@ import random
 
 import numpy as np
 
-from shapegen.shapes.base import Shape, _clip_bbox, _clamp, _register
+from legacy.shapegen.shapes.base import Shape, _clip_bbox, _clamp, _register
 
 
 @dataclass

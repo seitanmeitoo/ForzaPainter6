@@ -22,7 +22,7 @@ def _register_cuda_dll_dirs() -> None:
 
 _register_cuda_dll_dirs()
 
-from gui import App
+from legacy.gui import App
 
 
 if __name__ == "__main__":

@@ -23,11 +23,11 @@ import json
 import math
 from pathlib import Path
 
-from shapegen.shapes import Shape
-from shapegen.shapes.rectangle import Rectangle, RotatedRectangle
-from shapegen.shapes.ellipse import Ellipse, RotatedEllipse
-from shapegen.shapes.circle import Circle
-from shapegen.shapes.triangle import Triangle
+from legacy.shapegen.shapes import Shape
+from legacy.shapegen.shapes.rectangle import Rectangle, RotatedRectangle
+from legacy.shapegen.shapes.ellipse import Ellipse, RotatedEllipse
+from legacy.shapegen.shapes.circle import Circle
+from legacy.shapegen.shapes.triangle import Triangle
 
 
 RECTANGLE_TYPE = 1

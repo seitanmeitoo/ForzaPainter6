@@ -1,0 +1,7 @@
+#include <windows.h>
+
+/* Icone de l'application (ID 1 = celle affichee par l'Explorateur) */
+1 ICON "icon.ico"
+
+/* Manifest : DPI-awareness PerMonitorV2 (ID 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID) */
+1 24 "app.manifest"

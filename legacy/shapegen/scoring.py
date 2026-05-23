@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from shapegen.shapes.base import Shape
+from legacy.shapegen.shapes.base import Shape
 
 
 def rms_error(a, b, alpha_mask=None, xp=np) -> float:
