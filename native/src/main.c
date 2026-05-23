@@ -1,5 +1,4 @@
-/* vinyl-painter - native C refactor
- * Phase 5 : ajout du smoke test 10 cercles aleatoires sur la base de la phase 4. */
+/* vinyl-painter - native C refactor */
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -47,7 +46,7 @@ static char            g_path_utf8[MAX_PATH * 4] = {0};
 static uint8_t        *g_alpha_mask     = NULL;  /* extrait au load si has_alpha */
 static int             g_sticker_enabled = 0;    /* checkbox UI, auto a load */
 
-/* Couleur de fond opaque (phase 15). Active seulement en mode opaque
+/* Couleur de fond opaque. Active seulement en mode opaque
  * (image sans alpha, ou alpha mais sticker decoche). */
 static int              g_use_custom_bg = 0;
 static struct nk_colorf g_bg_colorf     = {1.0f, 1.0f, 1.0f, 1.0f};  /* blanc par defaut */
@@ -61,7 +60,7 @@ static uint8_t          g_run_bg[3]     = {0, 0, 0};
 static char g_scoring_report[SCORING_REPORT_LINES][SCORING_REPORT_LINE] = {{0}};
 static int  g_scoring_report_count = 0;
 
-/* Generation asynchrone (phase 8). */
+/* Generation asynchrone. */
 static int           g_engine_active     = 0;
 static EngineThread  g_engine_thread     = {0};
 static Engine        g_engine            = {0};
@@ -71,7 +70,7 @@ static DWORD         g_engine_t0         = 0;
 static int           g_engine_stop_at    = 0;
 
 /* Resultat de la derniere generation (snapshot apres engine_free pour
- * permettre l'export FH6 ulterieur, cf phase 12). */
+ * permettre l'export FH6 ulterieur). */
 static Shape  *g_result_shapes     = NULL;
 static int     g_result_count      = 0;
 static int     g_result_w          = 0;
@@ -80,7 +79,7 @@ static uint8_t g_result_bg[4]      = {0, 0, 0, 0};
 static int     g_result_available  = 0;
 static int     g_result_sticker    = 0;  /* run en mode sticker -> bg alpha=0 a l'export */
 
-/* Etat des checkboxes "types autorises" (phase 9). Defaut : rectangle +
+/* Etat des checkboxes "types autorises". Defaut : rectangle +
  * rotated_ellipse, comme le legacy Python. Indices alignes sur ShapeType. */
 static int g_types_enabled[SHAPE_TYPE_COUNT] = {
     0,  /* SHAPE_CIRCLE */
@@ -206,7 +205,7 @@ static void open_file_dialog(HWND owner)
     }
 }
 
-/* --- Phase 5 : smoke test - genere 10 cercles aleatoires et les affiche --- */
+/* --- smoke test - genere 10 cercles aleatoires et les affiche --- */
 static void run_circles_test(HWND owner, int n_circles)
 {
     const int W = 512, H = 512;
@@ -267,7 +266,7 @@ static void run_circles_test(HWND owner, int n_circles)
     snprintf(g_path_utf8, sizeof(g_path_utf8), "[test : %d cercles aleatoires]", N);
 }
 
-/* --- Phase 6 : verifie que score_shape (formule delta) correspond au RMS reel
+/* --- verifie que score_shape (formule delta) correspond au RMS reel
  * apres composite. Utilise l'image courante comme target, init current uniforme
  * sur la moyenne de target, genere 5 cercles, compare pred vs reel. --- */
 static void scoring_report_reset(void)
@@ -368,7 +367,7 @@ static void run_scoring_test(HWND owner)
     free(current); free(test); free(mask);
 }
 
-/* --- Phase 8 : engine asynchrone via thread worker.
+/* --- engine asynchrone via thread worker.
  *
  *   start_engine_generation : alloue engine + target_copy + lance le worker.
  *   tick_engine_generation  : appele a chaque frame Nuklear ; draine les
@@ -537,7 +536,7 @@ static void tick_engine_generation(void)
         if (dt > 0.0)
             scoring_report_push("Vitesse : %.1f shapes/s", (double)final_count / dt);
 
-        /* Snapshot pour l'export FH6 ulterieur (phase 12). */
+        /* Snapshot pour l'export FH6 ulterieur. */
         free(g_result_shapes); g_result_shapes = NULL;
         if (final_count > 0) {
             g_result_shapes = (Shape*)malloc((size_t)final_count * sizeof(Shape));
@@ -572,7 +571,7 @@ static void tick_engine_generation(void)
     }
 }
 
-/* --- Phase 12 : export JSON FH6. Ouvre GetSaveFileNameW, warning lossy si
+/* --- export JSON FH6. Ouvre GetSaveFileNameW, warning lossy si
  * applicable, ecriture via fh6_export_to_file. --- */
 static void save_fh6_dialog(HWND owner)
 {
