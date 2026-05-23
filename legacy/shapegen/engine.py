@@ -7,14 +7,14 @@ import time
 
 import numpy as np
 
-from shapegen.profile import Profile
-from shapegen.scoring import (
+from legacy.shapegen.profile import Profile
+from legacy.shapegen.scoring import (
     composite, rms_error, score_shape, score_masks_batch, precompute_baseline,
 )
-from shapegen.shapes import (
+from legacy.shapegen.shapes import (
     Shape, random_shape_batch, rasterize_batch_multi, locate_batch_index,
 )
-from shapegen.xp import get_xp, to_cpu
+from legacy.shapegen.xp import get_xp, to_cpu
 
 
 # Heuristiques pour améliorer la fidélité visuelle des petites générations.
