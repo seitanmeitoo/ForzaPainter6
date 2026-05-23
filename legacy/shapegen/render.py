@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from shapegen.shapes import Shape
+from legacy.shapegen.shapes import Shape
 
 
 def _checkerboard(width: int, height: int, tile: int = 12) -> np.ndarray:

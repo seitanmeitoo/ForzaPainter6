@@ -11,15 +11,15 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser, ttk
 from PIL import Image, ImageTk
 
-from image_utils import load_image, compose_on_background
-from shapegen import (
+from legacy.image_utils import load_image, compose_on_background
+from legacy.shapegen import (
     Engine, EngineConfig, Profile, PRESETS, DEFAULT_PRESET,
     SUPPORTED_SHAPE_TYPES, DEFAULT_SHAPE_TYPES, LOSSY_SHAPE_TYPES,
     FH6_MAX_SHAPES,
     HAS_CUPY, gpu_available, gpu_device_name,
 )
-from shapegen.render import render_shapes
-from fh6_export import to_fh6_payload, save_fh6_json
+from legacy.shapegen.render import render_shapes
+from legacy.fh6_export import to_fh6_payload, save_fh6_json
 
 
 PREVIEW_PANE_SIZE = 480
@@ -389,11 +389,11 @@ class App:
             for event in self.engine.run():
                 self.event_queue.put(event)
         except Exception as exc:  # safety net
-            from shapegen.engine import EngineEvent
+            from legacy.shapegen.engine import EngineEvent
             self.event_queue.put(EngineEvent(kind="error", message=str(exc)))
 
     def _drain_queue(self) -> None:
-        from shapegen.engine import EngineEvent  # local for type ref
+        from legacy.shapegen.engine import EngineEvent  # local for type ref
         drained_any = False
         try:
             while True:
@@ -461,7 +461,7 @@ class App:
             return
         if self.source_alpha is not None and self.transparency_mode.get() == "keep":
             # composite over a checkerboard so the user sees the cut-out
-            from shapegen.render import _checkerboard
+            from legacy.shapegen.render import _checkerboard
             h, w = canvas.shape[:2]
             board = _checkerboard(w, h)
             a = (self.source_alpha.astype(np.float32) / 255.0)[:, :, None]
