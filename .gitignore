@@ -1,0 +1,14 @@
+runtime/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.idea/
+.vscode/
+
+# native C build artifacts
+native/build/
+native/*.exe
+native/*.o
+native/*.log
