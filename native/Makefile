@@ -3,7 +3,7 @@ WINDRES     = windres
 SRC_DIR     = src
 VENDOR_DIR  = vendor
 BUILD_DIR   = build
-OUT         = vinyl-painter.exe
+OUT         = forzapainter6.exe
 RC          = app.rc
 RES         = $(BUILD_DIR)/app.res.o
 
