@@ -9,8 +9,8 @@ Pré-requis : **MSYS2 UCRT64** avec GCC ≥ 13 (`pacman -S --needed base-devel m
 Depuis le shell **MSYS2 UCRT64** :
 
 ```bash
-cd /c/Users/lajam/Documents/Code/vinyl-painter/native
-make release      # produit ./vinyl-painter.exe (optimisé -O3 + LTO + AVX natif, sous-système GUI)
+cd native
+make release      # produit ./forzapainter6.exe (optimisé -O3 + LTO + AVX natif, sous-système GUI)
 make debug        # build avec symboles -g -O0 (sous-système console, prints visibles)
 make run          # lance l'exe
 make clean        # supprime build/ et l'exe
