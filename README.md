@@ -25,6 +25,10 @@ Outil qui convertit une image en formes géométriques (rectangles + ellipses to
 - **6 types de formes** : rectangles et ellipses tournées (natifs FH6, sans perte) ; cercles, ellipses, carrés tournés, triangles (convertis/approximés à l'export)
 - Génération en arrière-plan avec preview live et progression
 
+### Amener les formes dans FH6
+- **Export JSON** compatible FH6 / forza-painter (`Exporter JSON FH6...`)
+- **Injection mémoire directe (étape 2b)** : écrit les formes dans le processus du jeu via `WriteProcessMemory`, sans saisie manuelle. Localise le groupe de vinyles dynamiquement (empreinte de sphères + fallback RTTI) et **valide avant d'écrire** (refuse si pas de candidat fiable, pour ne pas corrompre l'état du jeu). Offsets confirmés sur FH6 build 354.221, surchargeables sans recompiler.
+
 ## Build & lancement
 
 Pré-requis : **MSYS2 UCRT64** avec GCC. Depuis le shell MSYS2 UCRT64 :
