@@ -25,6 +25,8 @@
 #include "threads.h"
 #include "profile.h"
 #include "fh6_export.h"
+#include "fh6_inject.h"
+#include "fh6_thread.h"
 #include "util.h"
 
 #include <math.h>
@@ -78,6 +80,19 @@ static int     g_result_h          = 0;
 static uint8_t g_result_bg[4]      = {0, 0, 0, 0};
 static int     g_result_available  = 0;
 static int     g_result_sticker    = 0;  /* run en mode sticker -> bg alpha=0 a l'export */
+
+/* Etape 2b : JSON FH6 charge pour apercu + injection (onglet Import). */
+static Fh6JsonDoc g_import_doc       = {0};
+static int        g_import_loaded    = 0;
+static char       g_import_name[256] = {0};
+static int        g_import_layer_count = 0;  /* count template in-game ; 0 = auto */
+
+/* Etape 2b : worker de fond pour la localisation/injection (hors thread UI). */
+#define FH6_SCAN_BUDGET_MS 120000   /* delai max du scan (cf. forza-painter ref) */
+static Fh6Worker g_fh6_worker = {0};
+static int       g_fh6_active = 0;
+static long      g_fh6_seq    = 0;
+static DWORD     g_fh6_t0     = 0;
 
 /* Etat des checkboxes "types autorises". Defaut : rectangle +
  * rotated_ellipse, comme le legacy Python. Indices alignes sur ShapeType. */
@@ -611,6 +626,190 @@ static void save_fh6_dialog(HWND owner)
     scoring_report_push("Export OK (%d lossy)", lossy);
 }
 
+/* --- Etape 2b : injection memoire FH6. Le profil par defaut est surcharge par
+ * un fh6_inject.cfg place a cote de l'exe (offsets/divisors ajustables sans
+ * recompiler). Chaque action attache le processus, agit, puis se detache. --- */
+static void fh6_cfg_path(wchar_t *out, int n)
+{
+    wchar_t exe[MAX_PATH];
+    DWORD len = GetModuleFileNameW(NULL, exe, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) { out[0] = 0; return; }
+    wchar_t *slash = wcsrchr(exe, L'\\');
+    if (slash) slash[1] = 0; else exe[0] = 0;
+    _snwprintf(out, (size_t)n, L"%lsfh6_inject.cfg", exe);
+}
+
+static void fh6_report_to_ui(HWND owner, const char *report)
+{
+    wchar_t wmsg[2048];
+    MultiByteToWideChar(CP_UTF8, 0, report, -1, wmsg, 2048);
+    MessageBoxW(owner, wmsg, WINDOW_TITLE, MB_ICONINFORMATION);
+}
+
+/* Demarre un job FH6 (localisation ou injection) sur le thread de fond. L'UI
+ * reste reactive ; tick_fh6_job() draine le statut et finalise. */
+static void start_fh6_job(HWND owner, Fh6JobKind kind)
+{
+    if (g_fh6_active) return;
+
+    if (kind == FH6_JOB_INJECT && !g_import_loaded) {
+        MessageBoxW(owner, L"Charge d'abord un JSON (bouton \"Charger un JSON...\").",
+                    WINDOW_TITLE, MB_ICONWARNING);
+        return;
+    }
+
+    const wchar_t *prompt = (kind == FH6_JOB_INJECT)
+        ? L"L'injection va ECRIRE dans la memoire de Forza Horizon 6.\n\n"
+          L"Dans FH6 : ouvre l'editeur de groupes de vinyles, charge un template\n"
+          L"de spheres (500 a 3000), DEGROUPE-le, et garde l'editeur au premier plan.\n"
+          L"Renseigne le nombre de layers du template (champ \"Layers template\").\n\n"
+          L"L'app reste reactive ; tu peux Annuler. Continuer ?"
+        : L"Localisation (lecture seule) du groupe de vinyles FH6.\n\n"
+          L"Dans FH6 : ouvre l'editeur de groupes de vinyles, charge un template\n"
+          L"de spheres (500 a 3000), DEGROUPE-le, et garde l'editeur au premier plan.\n"
+          L"Renseigne le nombre de layers du template pour un scan cible (sinon auto).\n\n"
+          L"L'app reste reactive ; tu peux Annuler. Continuer ?";
+    if (MessageBoxW(owner, prompt, WINDOW_TITLE, MB_OKCANCEL | MB_ICONINFORMATION) != IDOK)
+        return;
+
+    Fh6Profile prof;
+    fh6_profile_default(&prof);
+    wchar_t cfg[MAX_PATH];
+    fh6_cfg_path(cfg, MAX_PATH);
+    fh6_profile_load_cfg(&prof, cfg);
+
+    const Fh6JsonDoc *doc = (kind == FH6_JOB_INJECT) ? &g_import_doc : NULL;
+    if (fh6_worker_start(&g_fh6_worker, kind, &prof, g_import_layer_count, doc,
+                         FH6_SCAN_BUDGET_MS) != 0) {
+        MessageBoxW(owner, L"Echec demarrage du thread FH6.", WINDOW_TITLE, MB_ICONERROR);
+        return;
+    }
+    g_fh6_active = 1;
+    g_fh6_seq    = 0;
+    g_fh6_t0     = GetTickCount();
+    scoring_report_reset();
+    scoring_report_push(kind == FH6_JOB_INJECT ? "Injection : scan en cours..."
+                                               : "Localisation : scan en cours...");
+}
+
+static void cancel_fh6_job(void)
+{
+    if (g_fh6_active) fh6_worker_cancel(&g_fh6_worker);
+}
+
+/* Draine le statut du worker et finalise quand il a termine. Appele chaque frame. */
+static void tick_fh6_job(HWND owner)
+{
+    if (!g_fh6_active) return;
+
+    char line[256];
+    if (fh6_worker_take_status(&g_fh6_worker, line, sizeof(line), &g_fh6_seq)) {
+        double dt = (double)(GetTickCount() - g_fh6_t0) / 1000.0;
+        scoring_report_reset();
+        scoring_report_push("%s", line);
+        scoring_report_push("%.0fs ecoulees - bouton Annuler pour stopper", dt);
+    }
+
+    if (!fh6_worker_done(&g_fh6_worker)) return;
+
+    fh6_worker_join(&g_fh6_worker);
+    int  result = g_fh6_worker.result;
+    char report[1024];
+    strncpy(report, g_fh6_worker.report, sizeof(report) - 1);
+    report[sizeof(report) - 1] = 0;
+    Fh6JobKind kind = g_fh6_worker.kind;
+    fh6_worker_free(&g_fh6_worker);
+    g_fh6_active = 0;
+
+    fh6_report_to_ui(owner, report);
+    scoring_report_reset();
+    if (kind == FH6_JOB_INJECT) {
+        if (result >= 0) scoring_report_push("Injection : %d formes ecrites", result);
+        else             scoring_report_push("Injection echouee (voir message)");
+    } else {
+        scoring_report_push(result == 0 ? "Localisation OK (voir message)"
+                                        : "Localisation : rien trouve (voir message)");
+    }
+}
+
+/* Rend l'apercu d'un JSON charge : composite les formes sur un canvas et
+ * l'installe dans le panneau Apercu (reutilise la rasterisation de shapes.c). */
+static void preview_json_doc(const Fh6JsonDoc *doc)
+{
+    int W = doc->image_w, H = doc->image_h;
+    if (W <= 0 || H <= 0) return;
+    uint8_t *canvas = (uint8_t *)malloc((size_t)W * H * 4u);
+    uint8_t *mask   = (uint8_t *)malloc((size_t)W * H);
+    if (!canvas || !mask) { free(canvas); free(mask); return; }
+
+    uint8_t br = 220, bg = 220, bb = 220;  /* gris neutre pour le mode sticker */
+    if (doc->bg_alpha > 0 && doc->count > 0 && doc->shapes[0].is_bg) {
+        br = doc->shapes[0].rgba[0];
+        bg = doc->shapes[0].rgba[1];
+        bb = doc->shapes[0].rgba[2];
+    }
+    for (int i = 0; i < W * H; ++i) {
+        canvas[i*4+0] = br; canvas[i*4+1] = bg; canvas[i*4+2] = bb; canvas[i*4+3] = 255;
+    }
+
+    for (int i = 0; i < doc->count; ++i) {
+        const Fh6JsonShape *js = &doc->shapes[i];
+        if (js->is_bg || js->rgba[3] <= 0) continue;
+        Shape s;
+        if (js->type == 1) {
+            s.ops = &SHAPE_OPS_RECT;
+            s.params[0] = js->x; s.params[1] = js->y;
+            s.params[2] = js->w * 0.5f; s.params[3] = js->h * 0.5f;
+        } else if (js->type == 16) {
+            s.ops = &SHAPE_OPS_ELLIPSE_ROT;
+            s.params[0] = js->x; s.params[1] = js->y;
+            s.params[2] = js->w * 0.5f; s.params[3] = js->h * 0.5f;
+            s.params[4] = js->angle;
+        } else {
+            continue;
+        }
+        s.color[0] = js->rgba[0]; s.color[1] = js->rgba[1];
+        s.color[2] = js->rgba[2]; s.color[3] = js->rgba[3];
+        Bbox bbx;
+        s.ops->rasterize_mask(&s, W, H, mask, &bbx);
+        if (bbox_empty(&bbx)) continue;
+        apply_shape(canvas, W, H, mask, &bbx, s.color, s.color[3]);
+    }
+    free(mask);
+
+    char label[64];
+    snprintf(label, sizeof(label), "[JSON : %d formes]", doc->count > 0 ? doc->count - 1 : 0);
+    install_canvas_into_preview(canvas, W, H, label);  /* prend possession de canvas */
+}
+
+static void run_fh6_load(HWND owner)
+{
+    wchar_t path[MAX_PATH] = {0};
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = owner;
+    ofn.lpstrFile   = path;
+    ofn.nMaxFile    = MAX_PATH;
+    ofn.lpstrFilter = L"JSON FH6 (*.json)\0*.json\0Tous (*.*)\0*.*\0";
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+
+    Fh6JsonDoc doc;
+    if (fh6_load_json(path, &doc) != 0) {
+        MessageBoxW(owner, L"Fichier JSON FH6 invalide ou illisible.", WINDOW_TITLE, MB_ICONERROR);
+        return;
+    }
+    if (g_import_loaded) fh6_free_json(&g_import_doc);
+    g_import_doc = doc;
+    g_import_loaded = 1;
+
+    const wchar_t *fn = wcsrchr(path, L'\\');
+    fn = fn ? fn + 1 : path;
+    WideCharToMultiByte(CP_UTF8, 0, fn, -1, g_import_name, sizeof(g_import_name), NULL, NULL);
+
+    preview_json_doc(&g_import_doc);
+}
+
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_DESTROY) {
@@ -657,6 +856,7 @@ int main(void)
     GdiFont *font = nk_gdifont_create("Segoe UI", 14);
     struct nk_context *ctx = nk_gdi_init(font, dc, WINDOW_W, WINDOW_H);
 
+    int active_tab       = 0;    /* 0 = generation JSON, 1 = import FH6 */
     int preset_idx       = DEFAULT_PRESET_IDX;
     int last_preset_idx  = -1;   /* force la synchro au premier passage */
     int shapes_count     = PRESETS[DEFAULT_PRESET_IDX].stop_at;
@@ -686,6 +886,8 @@ int main(void)
 
         /* Drain les events du thread engine et finalise si termine. */
         tick_engine_generation();
+        /* Idem pour le worker de localisation/injection FH6. */
+        tick_fh6_job(wnd);
 
         /* Quand l'utilisateur change le preset, on aligne les 3 spinners
          * sur ses defaults. Ensuite il peut les ajuster individuellement. */
@@ -700,111 +902,186 @@ int main(void)
         if (nk_begin(ctx, "Controles", nk_rect(20, 20, 380, 720),
                 NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_MOVABLE))
         {
-            nk_layout_row_dynamic(ctx, 22, 1);
-            nk_label(ctx, "Image source", NK_TEXT_LEFT);
-            nk_label(ctx, g_path_utf8[0] ? g_path_utf8 : "(aucune)", NK_TEXT_LEFT);
+            /* Onglets : Generation JSON / Import FH6 */
+            nk_layout_row_dynamic(ctx, 28, 2);
+            if (nk_option_label(ctx, "Generation JSON", active_tab == 0)) active_tab = 0;
+            if (nk_option_label(ctx, "Import FH6", active_tab == 1)) active_tab = 1;
 
-            nk_layout_row_dynamic(ctx, 30, 1);
-            if (nk_button_label(ctx, "Choisir image...")) {
-                open_file_dialog(wnd);
-            }
-            if (nk_button_label(ctx, "Test : 10 cercles aleatoires")) {
-                run_circles_test(wnd, 10);
-            }
-            if (nk_button_label(ctx, "Test : scoring")) {
-                run_scoring_test(wnd);
-            }
+            nk_layout_row_dynamic(ctx, 6, 1);
+            nk_spacing(ctx, 1);
 
+            if (active_tab == 0) {
+                /* ===== Onglet Generation JSON ===== */
+                nk_layout_row_dynamic(ctx, 22, 1);
+                nk_label(ctx, "Image source", NK_TEXT_LEFT);
+                nk_label(ctx, g_path_utf8[0] ? g_path_utf8 : "(aucune)", NK_TEXT_LEFT);
+
+                nk_layout_row_dynamic(ctx, 30, 1);
+                if (nk_button_label(ctx, "Choisir image...")) {
+                    open_file_dialog(wnd);
+                }
+                if (nk_button_label(ctx, "Test : 10 cercles aleatoires")) {
+                    run_circles_test(wnd, 10);
+                }
+                if (nk_button_label(ctx, "Test : scoring")) {
+                    run_scoring_test(wnd);
+                }
+
+                if (g_image.rgba) {
+                    char info[128];
+                    nk_layout_row_dynamic(ctx, 20, 1);
+                    snprintf(info, sizeof(info), "Dimensions : %d x %d",
+                             g_image.width, g_image.height);
+                    nk_label(ctx, info, NK_TEXT_LEFT);
+                    nk_label(ctx, g_image.has_alpha ? "Alpha : oui" : "Alpha : non",
+                             NK_TEXT_LEFT);
+                }
+
+                nk_layout_row_dynamic(ctx, 8, 1);
+                nk_spacing(ctx, 1);
+
+                nk_layout_row_dynamic(ctx, 22, 1);
+                nk_label(ctx, "Preset", NK_TEXT_LEFT);
+                nk_layout_row_dynamic(ctx, 26, 1);
+                preset_idx = nk_combo(ctx, preset_names, N_PRESETS, preset_idx, 26,
+                                      nk_vec2(340, 200));
+
+                nk_layout_row_dynamic(ctx, 22, 1);
+                nk_property_int(ctx, "Nombre de formes", 50, &shapes_count, FH6_MAX_SHAPES, 50, 5);
+                nk_property_int(ctx, "Candidats random", 50, &random_samples, 10000, 50, 10);
+                nk_property_int(ctx, "Mutations", 10, &mutated_samples, 2000, 10, 5);
+                nk_property_int(ctx, "Threads", 1, &n_threads, 32, 1, 1);
+
+                nk_layout_row_dynamic(ctx, 8, 1);
+                nk_spacing(ctx, 1);
+
+                nk_layout_row_dynamic(ctx, 20, 1);
+                nk_label(ctx, "Types autorises", NK_TEXT_LEFT);
+                nk_layout_row_dynamic(ctx, 22, 2);
+                for (int i = 0; i < SHAPE_TYPE_COUNT; ++i) {
+                    nk_checkbox_label(ctx, g_types_labels[i], &g_types_enabled[i]);
+                }
+
+                nk_layout_row_dynamic(ctx, 8, 1);
+                nk_spacing(ctx, 1);
+
+                /* Checkbox sticker : actif seulement si l'image a un canal alpha. */
+                nk_layout_row_dynamic(ctx, 22, 1);
+                if (g_alpha_mask) {
+                    nk_checkbox_label(ctx, "Mode sticker (preserve la transparence)",
+                                      &g_sticker_enabled);
+                } else {
+                    nk_label(ctx, "Mode sticker : pas d'alpha detecte", NK_TEXT_LEFT);
+                }
+
+                /* Couleur de fond : seulement si alpha detecte ET sticker decoche. */
+                if (g_alpha_mask && !g_sticker_enabled) {
+                    nk_layout_row_dynamic(ctx, 22, 1);
+                    nk_checkbox_label(ctx, "Couleur de fond personnalisee", &g_use_custom_bg);
+                    if (g_use_custom_bg) {
+                        nk_layout_row_dynamic(ctx, 26, 1);
+                        if (nk_combo_begin_color(ctx, nk_rgb_cf(g_bg_colorf),
+                                                 nk_vec2(300, 350))) {
+                            nk_layout_row_dynamic(ctx, 120, 1);
+                            g_bg_colorf = nk_color_picker(ctx, g_bg_colorf, NK_RGB);
+                            nk_layout_row_dynamic(ctx, 22, 1);
+                            g_bg_colorf.r = nk_propertyf(ctx, "#R", 0, g_bg_colorf.r, 1.0f, 0.01f, 0.005f);
+                            g_bg_colorf.g = nk_propertyf(ctx, "#G", 0, g_bg_colorf.g, 1.0f, 0.01f, 0.005f);
+                            g_bg_colorf.b = nk_propertyf(ctx, "#B", 0, g_bg_colorf.b, 1.0f, 0.01f, 0.005f);
+                            nk_combo_end(ctx);
+                        }
+                    }
+                }
+
+                nk_layout_row_dynamic(ctx, 8, 1);
+                nk_spacing(ctx, 1);
+
+                nk_layout_row_dynamic(ctx, 30, 2);
+                if (nk_button_label(ctx, "Generer")) {
+                    start_engine_generation(wnd, shapes_count, random_samples,
+                                            mutated_samples, n_threads);
+                }
+                if (nk_button_label(ctx, "Annuler")) {
+                    cancel_engine_generation();
+                }
+
+                nk_layout_row_dynamic(ctx, 30, 1);
+                if (nk_button_label(ctx, "Exporter JSON FH6...")) {
+                    save_fh6_dialog(wnd);
+                }
+            } else {
+                /* ===== Onglet Import FH6 (etape 2b) ===== */
+                nk_layout_row_dynamic(ctx, 18, 1);
+                nk_label(ctx, "1. Charger un JSON FH6 (apercu + infos)", NK_TEXT_LEFT);
+
+                nk_layout_row_dynamic(ctx, 30, 1);
+                if (!g_fh6_active && nk_button_label(ctx, "Charger un JSON...")) {
+                    run_fh6_load(wnd);
+                }
+
+            
+                if (g_import_loaded) {
+                    char info[160];
+                    int drawables = g_import_doc.n_rect + g_import_doc.n_ellipse;
+                    nk_layout_row_dynamic(ctx, 18, 1);
+                    snprintf(info, sizeof(info), "Fichier : %s", g_import_name);
+                    nk_label(ctx, info, NK_TEXT_LEFT);
+                    snprintf(info, sizeof(info), "Formes : %d (rect %d, ellipse %d)",
+                             drawables, g_import_doc.n_rect, g_import_doc.n_ellipse);
+                    nk_label(ctx, info, NK_TEXT_LEFT);
+                    snprintf(info, sizeof(info), "Dimensions : %d x %d",
+                             g_import_doc.image_w, g_import_doc.image_h);
+                    nk_label(ctx, info, NK_TEXT_LEFT);
+                    snprintf(info, sizeof(info), "Fond : %s",
+                             g_import_doc.bg_alpha > 0 ? "opaque" : "transparent (sticker)");
+                    nk_label(ctx, info, NK_TEXT_LEFT);
+                } else {
+                    nk_layout_row_dynamic(ctx, 18, 1);
+                    nk_label(ctx, "(aucun JSON charge)", NK_TEXT_LEFT);
+                }
+
+                nk_layout_row_dynamic(ctx, 8, 1);
+                nk_spacing(ctx, 1);
+
+                nk_layout_row_dynamic(ctx, 16, 1);
+                nk_label(ctx, "2. DANS LE JEU (FH6) : editeur de groupes de", NK_TEXT_LEFT);
+                nk_label(ctx, "   vinyles ouvert, template de spheres CHARGE", NK_TEXT_LEFT);
+                nk_label(ctx, "   (500 a 3000) puis DEGROUPE. Garder au 1er plan.", NK_TEXT_LEFT);
+                nk_label(ctx, "   Admin si version Microsoft Store/Xbox.", NK_TEXT_LEFT);
+
+                nk_layout_row_dynamic(ctx, 22, 1);
+                nk_property_int(ctx, "Layers template (0=auto)", 0,
+                                &g_import_layer_count, FH6_MAX_SHAPES, 50, 5);
+
+                nk_layout_row_dynamic(ctx, 8, 1);
+                nk_spacing(ctx, 1);
+
+                if (g_fh6_active) {
+                    nk_layout_row_dynamic(ctx, 30, 1);
+                    if (nk_button_label(ctx, "Annuler le scan FH6")) {
+                        cancel_fh6_job();
+                    }
+                } else {
+                    nk_layout_row_dynamic(ctx, 30, 1);
+                    if (nk_button_label(ctx, "Localiser le groupe FH6 (test)")) {
+                        start_fh6_job(wnd, FH6_JOB_LOCATE);
+                    }
+                    if (nk_button_label(ctx, "Injecter dans le jeu")) {
+                        start_fh6_job(wnd, FH6_JOB_INJECT);
+                    }
+                }
+
+                nk_layout_row_dynamic(ctx, 16, 1);
+                nk_label(ctx, "Etape 2b : a valider in-game.", NK_TEXT_LEFT);
+            }
+            /* Zone de statut partagee (tests / generation / injection). */
             if (g_scoring_report_count > 0) {
+                nk_layout_row_dynamic(ctx, 8, 1);
+                nk_spacing(ctx, 1);
                 nk_layout_row_dynamic(ctx, 16, 1);
                 for (int i = 0; i < g_scoring_report_count; ++i) {
                     nk_label(ctx, g_scoring_report[i], NK_TEXT_LEFT);
                 }
-            }
-
-            if (g_image.rgba) {
-                char info[128];
-                nk_layout_row_dynamic(ctx, 20, 1);
-                snprintf(info, sizeof(info), "Dimensions : %d x %d",
-                         g_image.width, g_image.height);
-                nk_label(ctx, info, NK_TEXT_LEFT);
-                nk_label(ctx, g_image.has_alpha ? "Alpha : oui" : "Alpha : non",
-                         NK_TEXT_LEFT);
-            }
-
-            nk_layout_row_dynamic(ctx, 8, 1);
-            nk_spacing(ctx, 1);
-
-            nk_layout_row_dynamic(ctx, 22, 1);
-            nk_label(ctx, "Preset", NK_TEXT_LEFT);
-            nk_layout_row_dynamic(ctx, 26, 1);
-            preset_idx = nk_combo(ctx, preset_names, N_PRESETS, preset_idx, 26,
-                                  nk_vec2(340, 200));
-
-            nk_layout_row_dynamic(ctx, 22, 1);
-            nk_property_int(ctx, "Nombre de formes", 50, &shapes_count, FH6_MAX_SHAPES, 50, 5);
-            nk_property_int(ctx, "Candidats random", 50, &random_samples, 10000, 50, 10);
-            nk_property_int(ctx, "Mutations", 10, &mutated_samples, 2000, 10, 5);
-            nk_property_int(ctx, "Threads", 1, &n_threads, 32, 1, 1);
-
-            nk_layout_row_dynamic(ctx, 8, 1);
-            nk_spacing(ctx, 1);
-
-            nk_layout_row_dynamic(ctx, 20, 1);
-            nk_label(ctx, "Types autorises", NK_TEXT_LEFT);
-            nk_layout_row_dynamic(ctx, 22, 2);
-            for (int i = 0; i < SHAPE_TYPE_COUNT; ++i) {
-                nk_checkbox_label(ctx, g_types_labels[i], &g_types_enabled[i]);
-            }
-
-            nk_layout_row_dynamic(ctx, 8, 1);
-            nk_spacing(ctx, 1);
-
-            /* Checkbox sticker : actif seulement si l'image a un canal alpha. */
-            nk_layout_row_dynamic(ctx, 22, 1);
-            if (g_alpha_mask) {
-                nk_checkbox_label(ctx, "Mode sticker (preserve la transparence)",
-                                  &g_sticker_enabled);
-            } else {
-                nk_label(ctx, "Mode sticker : pas d'alpha detecte", NK_TEXT_LEFT);
-            }
-
-            /* Couleur de fond : seulement si alpha detecte ET sticker decoche,
-             * i.e. l'utilisateur a choisi de remplacer la transparence par une
-             * couleur. Sans alpha, il n'y a pas de fond a remplacer. */
-            if (g_alpha_mask && !g_sticker_enabled) {
-                nk_layout_row_dynamic(ctx, 22, 1);
-                nk_checkbox_label(ctx, "Couleur de fond personnalisee", &g_use_custom_bg);
-                if (g_use_custom_bg) {
-                    nk_layout_row_dynamic(ctx, 26, 1);
-                    if (nk_combo_begin_color(ctx, nk_rgb_cf(g_bg_colorf),
-                                             nk_vec2(300, 350))) {
-                        nk_layout_row_dynamic(ctx, 120, 1);
-                        g_bg_colorf = nk_color_picker(ctx, g_bg_colorf, NK_RGB);
-                        nk_layout_row_dynamic(ctx, 22, 1);
-                        g_bg_colorf.r = nk_propertyf(ctx, "#R", 0, g_bg_colorf.r, 1.0f, 0.01f, 0.005f);
-                        g_bg_colorf.g = nk_propertyf(ctx, "#G", 0, g_bg_colorf.g, 1.0f, 0.01f, 0.005f);
-                        g_bg_colorf.b = nk_propertyf(ctx, "#B", 0, g_bg_colorf.b, 1.0f, 0.01f, 0.005f);
-                        nk_combo_end(ctx);
-                    }
-                }
-            }
-
-            nk_layout_row_dynamic(ctx, 8, 1);
-            nk_spacing(ctx, 1);
-
-            nk_layout_row_dynamic(ctx, 30, 2);
-            if (nk_button_label(ctx, "Generer")) {
-                start_engine_generation(wnd, shapes_count, random_samples,
-                                        mutated_samples, n_threads);
-            }
-            if (nk_button_label(ctx, "Annuler")) {
-                cancel_engine_generation();
-            }
-
-            nk_layout_row_dynamic(ctx, 30, 1);
-            if (nk_button_label(ctx, "Exporter JSON FH6...")) {
-                save_fh6_dialog(wnd);
             }
 
             nk_layout_row_dynamic(ctx, 8, 1);
@@ -856,7 +1133,13 @@ int main(void)
     }
 
     teardown_engine_state();
+    if (g_fh6_active) {
+        fh6_worker_cancel(&g_fh6_worker);
+        fh6_worker_free(&g_fh6_worker);  /* join + cleanup */
+        g_fh6_active = 0;
+    }
     free(g_result_shapes); g_result_shapes = NULL;
+    fh6_free_json(&g_import_doc);
     free_preview();
     nk_gdifont_del(font);
     ReleaseDC(wnd, dc);

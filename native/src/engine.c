@@ -473,9 +473,23 @@ static double hill_climb(Engine *e, int K, const ScoringBaseline *baseline,
 void engine_run(Engine *e, EngineCallback on_event, void *user_data,
                 int preview_every)
 {
+    /* Anti-blocage : en mode sticker, une forme doit etre 100 % dans la silhouette
+     * (STICKER_OVERLAP_MIN). Au debut size_scale vaut 3.0 -> les formes sont trop
+     * grandes pour tenir dans une petite silhouette -> toutes rejetees (rms = inf).
+     * Comme size_scale derive de la progression (qui reste a 0 tant qu'aucune forme
+     * n'est commitee), la boucle tournerait a l'infini. On retrecit donc les formes
+     * a chaque iteration sterile (et on relache doucement apres un succes) ; si meme
+     * a taille minimale rien ne tient (silhouette degeneree), on s'arrete proprement. */
+    int stall = 0;
+    const int   STALL_MAX  = 60;
+    const float STALL_SHRINK = 0.85f;
+    const float SIZE_FLOOR = 0.05f;
+
     while (e->shapes_count < e->config.stop_at && !e->cancel) {
         float progress = (float)e->shapes_count / (float)e->config.stop_at;
         float size_scale = size_scale_for_progress(progress);
+        for (int s = 0; s < stall; ++s) size_scale *= STALL_SHRINK;
+        if (size_scale < SIZE_FLOOR) size_scale = SIZE_FLOOR;
 
         ScoringBaseline baseline;
         scoring_precompute_baseline(e->canvas, e->target, e->alpha_mask,
@@ -491,7 +505,13 @@ void engine_run(Engine *e, EngineCallback on_event, void *user_data,
             rms_random = best_of_random(e, e->config.random_samples, size_scale,
                                          &baseline, &best, best_rgb);
         }
-        if (!isfinite(rms_random)) continue;
+        if (!isfinite(rms_random)) {
+            /* Aucune forme placable a cette taille : retrecir et reessayer. */
+            if (e->cancel) break;
+            if (++stall >= STALL_MAX) break;
+            continue;
+        }
+        if (stall > 0) --stall;  /* succes : relache vers des formes plus grandes */
 
         if (e->pool) {
             (void)hill_climb_mt(e, e->config.mutated_samples, &baseline,
