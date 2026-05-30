@@ -10,8 +10,8 @@ Outil qui convertit une image en formes géométriques (rectangles + ellipses to
 |---|---|
 | Génération image → formes + GUI (natif C) | ✅ fait |
 | Export JSON FH6 | ✅ fait |
-| **Injection mémoire FH6 (étape 2b)** | 🚧 en cours |
-| Import via contrôle souris (étape 2a) | ⏸️ repoussé / probablement abandonné |
+| **Injection mémoire FH6 (étape 2b)** | ✅ fait |
+| Import via contrôle souris (étape 2a) | ❌ abandonné |
 | Génération Python + GUI Tkinter (étape 1) | ✅ archivée dans [legacy/](legacy/) |
 
 ## Fonctionnalités
