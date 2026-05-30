@@ -419,6 +419,11 @@ static void start_engine_generation(HWND owner, int stop_at,
                                     int n_threads)
 {
     if (g_engine_active) return;
+    if (g_fh6_active) {
+        MessageBoxW(owner, L"Un scan FH6 est en cours ; attends la fin avant de generer.",
+                    WINDOW_TITLE, MB_ICONWARNING);
+        return;
+    }
     scoring_report_reset();
     if (!g_image.rgba) {
         MessageBoxW(owner, L"Charge d'abord une image cible.", WINDOW_TITLE, MB_ICONWARNING);
@@ -651,6 +656,11 @@ static void fh6_report_to_ui(HWND owner, const char *report)
 static void start_fh6_job(HWND owner, Fh6JobKind kind)
 {
     if (g_fh6_active) return;
+    if (g_engine_active) {
+        MessageBoxW(owner, L"Une generation est en cours ; attends la fin avant d'agir.",
+                    WINDOW_TITLE, MB_ICONWARNING);
+        return;
+    }
 
     if (kind == FH6_JOB_INJECT && !g_import_loaded) {
         MessageBoxW(owner, L"Charge d'abord un JSON (bouton \"Charger un JSON...\").",
@@ -695,6 +705,12 @@ static void start_fh6_job(HWND owner, Fh6JobKind kind)
 static void cancel_fh6_job(void)
 {
     if (g_fh6_active) fh6_worker_cancel(&g_fh6_worker);
+}
+
+/* Un seul job de fond a la fois : 1 si engine OU worker FH6 tourne. */
+static int any_job_active(void) 
+{ 
+    return g_engine_active || g_fh6_active; 
 }
 
 /* Draine le statut du worker et finalise quand il a termine. Appele chaque frame. */
@@ -873,6 +889,9 @@ int main(void)
     const char *preset_names[N_PRESETS];
     for (int i = 0; i < N_PRESETS; ++i) preset_names[i] = PRESETS[i].name;
 
+    int last_tab = -1;                   /* detecte le changement d'onglet */
+    int cw = WINDOW_W, ch = WINDOW_H;   /* taille client courante (mise a jour chaque frame) */
+
     int running = 1;
     while (running) {
         MSG msg;
@@ -883,6 +902,11 @@ int main(void)
             DispatchMessageW(&msg);
         }
         nk_input_end(ctx);
+
+        /* Taille client pour le layout responsive (mise a jour chaque frame). */
+        { RECT _rc; if (GetClientRect(wnd, &_rc)) { cw = _rc.right; ch = _rc.bottom; } }
+        if (cw < 100) cw = 100;
+        if (ch < 100) ch = 100;
 
         /* Drain les events du thread engine et finalise si termine. */
         tick_engine_generation();
@@ -898,14 +922,25 @@ int main(void)
             last_preset_idx = preset_idx;
         }
 
+        /* Layout responsive : dimensionnement depuis la taille client courante. */
+        int ctrl_h = ch - 40; if (ctrl_h < 80) ctrl_h = 80;
+        int prev_x = 420;   /* 20 + 380 + 20 */
+        int prev_w = cw - 440; if (prev_w < 80) prev_w = 80;   /* 440 = prev_x + 20 */
+
         /* --- Panneau Controles --- */
-        if (nk_begin(ctx, "Controles", nk_rect(20, 20, 380, 720),
-                NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_MOVABLE))
+        if (nk_begin(ctx, "Controles", nk_rect(20, 20, 380, (float)ctrl_h),
+                NK_WINDOW_BORDER | NK_WINDOW_TITLE))
         {
             /* Onglets : Generation JSON / Import FH6 */
             nk_layout_row_dynamic(ctx, 28, 2);
             if (nk_option_label(ctx, "Generation JSON", active_tab == 0)) active_tab = 0;
             if (nk_option_label(ctx, "Import FH6", active_tab == 1)) active_tab = 1;
+
+            /* Efface le statut au changement d'onglet (sauf si un job tourne). */
+            if (active_tab != last_tab) {
+                if (!any_job_active()) scoring_report_reset();
+                last_tab = active_tab;
+            }
 
             nk_layout_row_dynamic(ctx, 6, 1);
             nk_spacing(ctx, 1);
@@ -917,6 +952,7 @@ int main(void)
                 nk_label(ctx, g_path_utf8[0] ? g_path_utf8 : "(aucune)", NK_TEXT_LEFT);
 
                 nk_layout_row_dynamic(ctx, 30, 1);
+                if (any_job_active()) nk_widget_disable_begin(ctx);
                 if (nk_button_label(ctx, "Choisir image...")) {
                     open_file_dialog(wnd);
                 }
@@ -926,6 +962,7 @@ int main(void)
                 if (nk_button_label(ctx, "Test : scoring")) {
                     run_scoring_test(wnd);
                 }
+                if (any_job_active()) nk_widget_disable_end(ctx);
 
                 if (g_image.rgba) {
                     char info[128];
@@ -996,28 +1033,39 @@ int main(void)
                 nk_layout_row_dynamic(ctx, 8, 1);
                 nk_spacing(ctx, 1);
 
-                nk_layout_row_dynamic(ctx, 30, 2);
-                if (nk_button_label(ctx, "Generer")) {
-                    start_engine_generation(wnd, shapes_count, random_samples,
-                                            mutated_samples, n_threads);
-                }
-                if (nk_button_label(ctx, "Annuler")) {
-                    cancel_engine_generation();
+                if (g_engine_active) {
+                    /* Generation en cours : seul "Annuler" est accessible. */
+                    nk_layout_row_dynamic(ctx, 30, 1);
+                    if (nk_button_label(ctx, "Annuler la generation")) {
+                        cancel_engine_generation();
+                    }
+                } else {
+                    nk_layout_row_dynamic(ctx, 30, 1);
+                    if (g_fh6_active) nk_widget_disable_begin(ctx);
+                    if (nk_button_label(ctx, "Generer")) {
+                        start_engine_generation(wnd, shapes_count, random_samples,
+                                                mutated_samples, n_threads);
+                    }
+                    if (g_fh6_active) nk_widget_disable_end(ctx);
                 }
 
                 nk_layout_row_dynamic(ctx, 30, 1);
+                if (any_job_active()) nk_widget_disable_begin(ctx);
                 if (nk_button_label(ctx, "Exporter JSON FH6...")) {
                     save_fh6_dialog(wnd);
                 }
+                if (any_job_active()) nk_widget_disable_end(ctx);
             } else {
                 /* ===== Onglet Import FH6 (etape 2b) ===== */
                 nk_layout_row_dynamic(ctx, 18, 1);
                 nk_label(ctx, "1. Charger un JSON FH6 (apercu + infos)", NK_TEXT_LEFT);
 
                 nk_layout_row_dynamic(ctx, 30, 1);
-                if (!g_fh6_active && nk_button_label(ctx, "Charger un JSON...")) {
+                if (any_job_active()) nk_widget_disable_begin(ctx);
+                if (nk_button_label(ctx, "Charger un JSON...")) {
                     run_fh6_load(wnd);
                 }
+                if (any_job_active()) nk_widget_disable_end(ctx);
 
             
                 if (g_import_loaded) {
@@ -1063,12 +1111,14 @@ int main(void)
                     }
                 } else {
                     nk_layout_row_dynamic(ctx, 30, 1);
+                    if (g_engine_active) nk_widget_disable_begin(ctx);
                     if (nk_button_label(ctx, "Localiser le groupe FH6 (test)")) {
                         start_fh6_job(wnd, FH6_JOB_LOCATE);
                     }
                     if (nk_button_label(ctx, "Injecter dans le jeu")) {
                         start_fh6_job(wnd, FH6_JOB_INJECT);
                     }
+                    if (g_engine_active) nk_widget_disable_end(ctx);
                 }
 
                 nk_layout_row_dynamic(ctx, 16, 1);
@@ -1095,8 +1145,8 @@ int main(void)
         nk_end(ctx);
 
         /* --- Panneau Apercu --- */
-        if (nk_begin(ctx, "Apercu", nk_rect(420, 20, 840, 720),
-                NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_MOVABLE))
+        if (nk_begin(ctx, "Apercu", nk_rect((float)prev_x, 20, (float)prev_w, (float)ctrl_h),
+                NK_WINDOW_BORDER | NK_WINDOW_TITLE))
         {
             if (g_preview.handle.ptr) {
                 struct nk_rect cr = nk_window_get_content_region(ctx);
@@ -1127,9 +1177,15 @@ int main(void)
         nk_end(ctx);
 
         nk_gdi_render(nk_rgb(PANEL_BG_R, PANEL_BG_G, PANEL_BG_B));
-        /* Limite la boucle a ~120 FPS si rien d'urgent en cours. Sleep court
-         * pour ne pas amputer la reactivite de l'engine_thread (preview). */
-        Sleep(8);
+        /* Si un job tourne : poll court pour ne pas amputer la reactivite
+         * (previews engine, statut FH6). Sinon : veille CPU jusqu'a la
+         * prochaine entree (souris / clavier / WM_PAINT) -> ~0 % CPU au repos. */
+        if (any_job_active()) {
+            Sleep(8);
+        } else {
+            MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT,
+                                        MWMO_INPUTAVAILABLE);
+        }
     }
 
     teardown_engine_state();
