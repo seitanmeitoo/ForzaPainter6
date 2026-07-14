@@ -1,145 +1,155 @@
+**🇬🇧 English** | [🇫🇷 Français](docs/fr/CHANGELOG.md)
+
 # Changelog
 
-Tous les changements notables du projet **Forza Painter 6** depuis le début.
+All notable changes to the **Forza Painter 6** project since the beginning.
 
-Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
-Le projet n'utilise pas de versions sémantiques ; les entrées sont regroupées
-par date et suivent le découpage en **étapes** et **phases** sont seulement indicatif.
+Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+The project does not use semantic versioning; entries are grouped by date and
+follow the **step**/**phase** breakdown, which is indicative only.
 
 ---
 
-## 2026-05-27 — Distribution, sticker strict, parallélisme et injection mémoire
+## 2026-05-27 — Distribution, strict sticker mode, parallelism and memory injection
 
-### Ajouté
-- **Étape 2b — Injection mémoire FH6** : module C natif
-  `native/src/fh6_inject.{c,h}` intégré à la GUI. Lit un JSON FH6 exporté et
-  écrit les formes directement dans la mémoire du processus du jeu via
-  `WriteProcessMemory` (porté depuis ForzaDesigner6 « Multi-Support v3456 », MIT).
-  - Localisation du `CLiveryGroup` : empreinte sphères (scan `u16 == count`) +
-    fallback RTTI (`.?AVCLiveryGroup@@`), validation stricte avant toute écriture.
-  - Offsets confirmés FH6 build **354.221**, surchargeables à chaud via
+### Added
+- **Step 2 — FH6 memory injection**: native C module
+  `native/src/fh6_inject.{c,h}` integrated into the GUI. Reads an exported FH6
+  JSON file and writes the shapes directly into the game process's memory via
+  `WriteProcessMemory` (ported from ForzaDesigner6 "Multi-Support v3456", MIT).
+  - `CLiveryGroup` location: sphere fingerprint (scan `u16 == count`) + RTTI
+    fallback (`.?AVCLiveryGroup@@`), strict validation before any write.
+  - Offsets confirmed on FH6 build **354.221**, hot-overridable via
     `fh6_inject.cfg`.
-  - Deux boutons GUI : « Localiser le groupe (test) » (lecture seule) et
-    « Injecter (JSON) ». Admin requis seulement si `OpenProcess` échoue
-    (MS Store/Xbox) ; Steam OK sans élévation.
-- **Phase 15 — Parallel hill_climb multi-start** : le pool de workers
-  gère un job `JOB_MUTATE` en plus de `JOB_RANDOM`. `hill_climb_mt` lance N chaînes
-  de raffinement indépendantes depuis la même shape de base et garde la meilleure
-  → qualité ≥ séquentiel (RMS inchangé) en exploitant les cœurs inactifs.
-- **Phase 15 — Color picker fond opaque** : en mode opaque (image à
-  alpha, sticker décoché), choix d'une couleur de fond personnalisée via
-  `nk_color_picker` au lieu de la médiane par canal. L'alpha est composé sur cette
-  couleur, le canvas s'initialise dessus et l'export FH6 l'utilise comme fond.
-- **Phase 14 — Polish distribution** : build release en sous-système
-  Windows GUI (`-mwindows`, plus de console noire), icône `.ico` multi-tailles et
-  manifest DPI-aware PerMonitorV2 via `windres`. Ajout de `tools/make_icon.py`.
+  - Two GUI buttons: "Locate group (test)" (read-only) and "Inject (JSON)".
+    Admin rights only required if `OpenProcess` fails (MS Store/Xbox); Steam
+    works without elevation.
+- **Phase 15 — Parallel multi-start hill_climb**: the worker pool now
+  handles a `JOB_MUTATE` job alongside `JOB_RANDOM`. `hill_climb_mt` launches N
+  independent refinement chains from the same base shape and keeps the best one
+  → quality ≥ sequential (RMS unchanged) while using otherwise idle cores.
+- **Phase 15 — Opaque background color picker**: in opaque mode (image
+  with alpha, sticker unchecked), choice of a custom background color via
+  `nk_color_picker` instead of the per-channel median. Alpha is composited onto
+  this color, the canvas is initialized on it, and the FH6 export uses it as
+  the background.
+- **Phase 14 — Distribution polish**: release build in the Windows GUI
+  subsystem (`-mwindows`, no more black console window), multi-size `.ico` icon
+  and DPI-aware PerMonitorV2 manifest via `windres`. Added `tools/make_icon.py`.
 
-### Modifié / Corrigé
-- **Filtre sticker strict** : `STICKER_OVERLAP_MIN` passe de `0.995` à
-  `1.0` — une shape est rejetée dès qu'un seul pixel sort de la zone opaque,
-  supprimant les débordements visibles (coins de rectangles) en mode sticker.
-
----
-
-## 2026-05-22 — Refonte native C : phases 4 à 13
-
-### Ajouté
-- **Phase 13 — Mode sticker natif** : préservation de l'alpha en C.
-  `image_extract_alpha_mask` produit un masque binaire ; `scoring` gagne un
-  paramètre `alpha_mask` optionnel (RMS/baseline/couleur optimale restreints à la
-  silhouette, filtre `body_inside/body_total`). L'`Engine` possède une copie owned
-  du target et du masque ; canvas init gris uniforme. Checkbox GUI affichée
-  seulement si alpha détecté ; export FH6 avec fond transparent `(0,0,0,0)`.
-- **Phase 12 — Export JSON FH6** : `fh6_export.{c,h}`, sérialisation
-  manuelle (sans cJSON). Conversion `ShapeType` → type FH6 (CIRCLE/ELLIPSE/
-  ELLIPSE_ROT/RECT sans perte, RECT_ROT/TRIANGLE englobants = lossy). Bouton
-  « Exporter JSON FH6… » (`GetSaveFileNameW`), `MessageBox` d'avertissement si
-  formes lossy. Format identique au `fh6_export.py` legacy.
-- **Phase 11 — Pool de workers Win32** : `best_of_random_mt` répartit
-  les N candidats sur un pool de threads persistants (`EngineConfig.n_threads`,
-  auto-détecté). Chaque worker a son `Rng` et son buffer scratch ; synchronisation
-  par events Win32, sans lock sur le job partagé. Bench Équilibré 1500 formes :
-  40 s mono-thread → 10 s sur 12 threads (~4×). Spinner « Threads » dans la GUI.
-- **Phase 10 — Combo Preset → params engine** : table des 6 presets
-  portée (`profile.h`), resync auto des spinners au changement de preset, nouveaux
-  spinners « Candidats random » et « Mutations ». `FH6_MAX_SHAPES = 3000`.
-- **Phase 9 — 5 nouveaux types de formes + checkboxes** : portage des
-  ShapeOps Rectangle (axis & tourné), Ellipse (axis & tournée), Triangle.
-  `rng_gauss` (Box-Muller) pour les mutations. `EngineConfig.types_mask`,
-  `pick_type` uniforme parmi les bits actifs. 6 checkboxes GUI (défaut RECT +
-  ELLIPSE_ROT), warning si aucun type coché.
-- **Phase 8 — Engine asynchrone** : `threads.{c,h}`, `engine_run`
-  hébergé dans un thread worker Win32. Communication via `CRITICAL_SECTION` +
-  buffer preview single-slot, preview live (~20 updates/run), annulation réactive,
-  quit propre en plein run. Boutons « Générer »/« Annuler » tous deux fonctionnels.
-- **Phase 7 — Engine mono-thread** : `engine.{c,h}`, portage scalaire
-  de `engine.py` (`best_of_random` → `hill_climb` → `apply_shape`). Heuristiques
-  portées (alpha adaptatif, size_scale par progression, canvas init médian).
-- **Phase 6 — Scoring delta bbox-local** : `scoring.{c,h}`, baseline en
-  `double` (précision 4K), couleur optimale closed-form, formule delta
-  `baseline - region_old + region_new` ne touchant que la bbox. Validé 5/5
-  (prédit vs réel) via un bouton de test.
-- **Phase 5 — Shape vtable + Circle** : `rng.{c,h}` (xorshift128+ seedé
-  splitmix64, Lemire débiaisé), `util.h` (clamp/min/max inline), `shapes.{c,h}`
-  (vtable `ShapeOps`, `SHAPE_REGISTRY`), Circle complet, bouton de test « 10 cercles ».
-- **Phase 4 — Chargement image + preview Nuklear** : `image_io.{c,h}`
-  (wrapper `stb_image`, `_wfopen` Unicode-safe, détection alpha fine), bouton
-  « Choisir image… », layout 2 panneaux, `build_preview_image` corrigeant deux bugs
-  GDI du backend (swap R/B et cisaillement diagonal), `StretchBlt` en `HALFTONE`.
-  Vendoring de `stb_image.h`.
+### Changed / Fixed
+- **Strict sticker filter**: `STICKER_OVERLAP_MIN` raised from `0.995` to
+  `1.0` — a shape is now rejected as soon as a single pixel falls outside the
+  opaque area, removing visible overflow (rectangle corners) in sticker mode.
 
 ---
 
-## 2026-05-22 — Passe B, bascule en legacy/ et amorce de la refonte native
+## 2026-05-22 — Native C rewrite: phases 4 to 13
 
-### Ajouté
-- **Amorce de la refonte native C** : nouveau dossier `native/` (C pur,
-  CPU, GUI Nuklear+GDI, `.exe` Windows autonome). Makefile MinGW-w64/UCRT64
-  (release `-O3 -ffast-math -march=native -flto`), `main.c` (fenêtre Win32 +
-  Nuklear), vendoring de `nuklear.h`/`nuklear_gdi.h`. Build smoke OK (278 Ko,
-  zéro DLL MSYS au runtime).
-- **Passe B — batching natif des candidats (Python)** : 6 Shapes ×
-  méthodes batch (`random_batch`, `rasterize_batch`, `mutate_batch`,
-  `params_to_instance`, `to_params_row`), helpers multi-type dans `base.py`,
-  `score_masks_batch` (1 passe vectorisée via `einsum`, aucune sync D2H interne),
-  Engine GPU-first (`_best_of_random` batché, `_hill_climb` → parallel hill climb
-  K=64), suppression du `ThreadPoolExecutor`.
-
-### Modifié
-- **Bascule du Python en `legacy/`** : tout le code Python de l'étape 1
-  (`main.py`, `gui.py`, `image_utils.py`, `fh6_export.py`, `shapegen/`) déplacé dans
-  `legacy/` à titre de référence. `.gitignore` mis à jour.
-- **Fix add-ons GPU NVIDIA** (`70953c0`, PR #1 `fbe37f2`).
-- Nettoyage des répertoires `__pycache__` suivis par erreur (`a406c0c`, `6234319`).
+### Added
+- **Phase 13 — Native sticker mode**: alpha preservation in C.
+  `image_extract_alpha_mask` produces a binary mask; `scoring` gains an optional
+  `alpha_mask` parameter (RMS/baseline/optimal color restricted to the
+  silhouette, `body_inside/body_total` filter). `Engine` owns a copy of the
+  target and the mask; canvas is initialized to uniform gray. GUI checkbox
+  shown only if alpha is detected; FH6 export with transparent background
+  `(0,0,0,0)`.
+- **Phase 12 — FH6 JSON export**: `fh6_export.{c,h}`, manual serialization
+  (no cJSON). `ShapeType` → FH6 type conversion (CIRCLE/ELLIPSE/ELLIPSE_ROT/RECT
+  lossless, RECT_ROT/TRIANGLE bounding shapes = lossy). "Export FH6 JSON…"
+  button (`GetSaveFileNameW`), `MessageBox` warning if any shape is lossy.
+  Format identical to the legacy `fh6_export.py`.
+- **Phase 11 — Win32 worker pool**: `best_of_random_mt` distributes the N
+  candidates across a pool of persistent threads (`EngineConfig.n_threads`,
+  auto-detected). Each worker has its own `Rng` and scratch buffer;
+  synchronization via Win32 events, no lock on the shared job. Balanced preset
+  benchmark, 1500 shapes: 40 s single-threaded → 10 s on 12 threads (~4×).
+  "Threads" spinner in the GUI.
+- **Phase 10 — Preset combo → engine params**: the 6-preset table ported
+  (`profile.h`), spinners auto-resync on preset change, new "Random candidates"
+  and "Mutations" spinners. `FH6_MAX_SHAPES = 3000`.
+- **Phase 9 — 5 new shape types + checkboxes**: ported ShapeOps for
+  Rectangle (axis & rotated), Ellipse (axis & rotated), Triangle. `rng_gauss`
+  (Box-Muller) for mutations. `EngineConfig.types_mask`, `pick_type` uniform
+  among active bits. 6 GUI checkboxes (RECT + ELLIPSE_ROT checked by default),
+  warning if no type is checked.
+- **Phase 8 — Asynchronous engine**: `threads.{c,h}`, `engine_run` hosted
+  in a Win32 worker thread. Communication via `CRITICAL_SECTION` + single-slot
+  preview buffer, live preview (~20 updates/run), responsive cancellation,
+  clean quit mid-run. "Generate"/"Cancel" buttons both functional.
+- **Phase 7 — Single-threaded engine**: `engine.{c,h}`, scalar port of
+  `engine.py` (`best_of_random` → `hill_climb` → `apply_shape`). Ported
+  heuristics (adaptive alpha, progression-based size_scale, median canvas
+  init).
+- **Phase 6 — Local bbox delta scoring**: `scoring.{c,h}`, baseline in
+  `double` (4K precision), closed-form optimal color, delta formula
+  `baseline - region_old + region_new` touching only the bbox. Validated 5/5
+  (predicted vs actual) via a test button.
+- **Phase 5 — Shape vtable + Circle**: `rng.{c,h}` (xorshift128+ seeded by
+  splitmix64, Lemire-debiased), `util.h` (inline clamp/min/max), `shapes.{c,h}`
+  (`ShapeOps` vtable, `SHAPE_REGISTRY`), full Circle implementation, "10
+  circles" test button.
+- **Phase 4 — Image loading + Nuklear preview**: `image_io.{c,h}` (`stb_image`
+  wrapper, Unicode-safe `_wfopen`, fine-grained alpha detection), "Choose
+  image…" button, 2-panel layout, `build_preview_image` fixing two GDI backend
+  bugs (R/B channel swap and diagonal shear), `StretchBlt` in `HALFTONE` mode.
+  Vendored `stb_image.h`.
 
 ---
 
-## 2026-05-20 — Étape 1 : image → JSON géométrique FH6 (Python)
+## 2026-05-22 — Pass B, switch to legacy/ and start of the native rewrite
 
-### Ajouté
-- **Commit initial** : moteur de génération de formes porté depuis
-  ForzaDesigner6 (MIT), pur Python + NumPy, sans dépendance binaire. Restreint aux
-  deux types FH6 (rectangle axis-aligned `type=1`, ellipse tournée `type=16`).
-  UI Tkinter : chargement image + détection alpha, modes sticker / fond opaque,
-  filtrage des types avant génération, preview live, progression, annulation propre,
-  export vers chemin libre.
-- **6 types de formes et 6 presets de qualité** : ajout de
-  RotatedRectangle, Circle, Ellipse (axis), Triangle avec conversion intelligente à
-  l'export (`to_fh6_payload` renvoie `(payload, lossy_count)`, confirmation UI si
-  perte). Presets : Aperçu / Rapide / Équilibré / Détaillé / Qualité / Ultra qualité.
-- **Accélération GPU optionnelle via CuPy (passe A)** : module
-  `shapegen/xp.py` abstrayant le module array (numpy/cupy), `EngineConfig.use_gpu`,
-  conversion CPU des canvas yieldés. Checkbox GUI grisée si CuPy/GPU absent.
-- **Heuristiques de fidélité visuelle** : tailles initiales adaptatives
-  (`size_scale` 3.0 → 1.0), couleur de fond médiane, opacité adaptative (alpha
-  220 → 100). RMS sur logo 160×160 / 200 formes : 109 → 2.5 (−97,7 %).
+### Added
+- **Start of the native C rewrite**: new `native/` folder (pure C, CPU,
+  Nuklear+GDI GUI, standalone Windows `.exe`). MinGW-w64/UCRT64 Makefile
+  (release `-O3 -ffast-math -march=native -flto`), `main.c` (Win32 window +
+  Nuklear), vendored `nuklear.h`/`nuklear_gdi.h`. Smoke build OK (278 KB, zero
+  MSYS DLLs at runtime).
+- **Pass B — native candidate batching (Python)**: 6 Shapes × batch
+  methods (`random_batch`, `rasterize_batch`, `mutate_batch`,
+  `params_to_instance`, `to_params_row`), multi-type helpers in `base.py`,
+  `score_masks_batch` (1 vectorized pass via `einsum`, no internal D2H sync),
+  GPU-first Engine (`_best_of_random` batched, `_hill_climb` → parallel hill
+  climb K=64), removed `ThreadPoolExecutor`.
+
+### Changed
+- **Switched Python code to `legacy/`**: all step-1 Python code (`main.py`,
+  `gui.py`, `image_utils.py`, `fh6_export.py`, `shapegen/`) moved to `legacy/`
+  for reference. `.gitignore` updated.
+- **Fixed NVIDIA GPU add-ons** (`70953c0`, PR #1 `fbe37f2`).
+- Cleaned up `__pycache__` directories accidentally tracked (`a406c0c`,
+  `6234319`).
+
+---
+
+## 2026-05-20 — Step 1: image → FH6 geometric JSON (Python)
+
+### Added
+- **Initial commit**: shape generation engine ported from ForzaDesigner6
+  (MIT), pure Python + NumPy, no binary dependency. Restricted to the two FH6
+  types (axis-aligned rectangle `type=1`, rotated ellipse `type=16`). Tkinter
+  UI: image loading + alpha detection, sticker / opaque background modes, type
+  filtering before generation, live preview, progress, clean cancellation,
+  export to a chosen path.
+- **6 shape types and 6 quality presets**: added RotatedRectangle, Circle,
+  Ellipse (axis), Triangle with smart export conversion (`to_fh6_payload`
+  returns `(payload, lossy_count)`, UI confirmation if lossy). Presets:
+  Preview / Fast / Balanced / Detailed / Quality / Ultra quality.
+- **Optional GPU acceleration via CuPy (pass A)**: `shapegen/xp.py` module
+  abstracting the array module (numpy/cupy), `EngineConfig.use_gpu`, CPU
+  conversion of yielded canvases. GUI checkbox grayed out if CuPy/GPU is
+  absent.
+- **Visual fidelity heuristics**: adaptive initial sizes (`size_scale` 3.0
+  → 1.0), median background color, adaptive opacity (alpha 220 → 100). RMS on
+  a 160×160 logo / 200 shapes: 109 → 2.5 (−97.7%).
 
 ### Performance
-- **Cache du baseline de scoring (passe B initiale)** :
-  `precompute_baseline()` calcule `diff_out_squared_sum` une seule fois par appel à
-  `_best_of_random`/`_hill_climb`. Speedup CPU mesuré ~1,27× (200 formes / 128×128).
+- **Scoring baseline cache (initial pass B)**: `precompute_baseline()`
+  computes `diff_out_squared_sum` once per call to
+  `_best_of_random`/`_hill_climb`. Measured CPU speedup ~1.27× (200 shapes /
+  128×128).
 
-### Corrigé
-- **Plafond FH6 de 3000 formes** : constante `FH6_MAX_SHAPES = 3000`,
-  Spinbox UI borné, clamp défensif, presets Qualité/Ultra qualité réajustés
-  (2800 / 3000).
+### Fixed
+- **FH6 3000-shape cap**: `FH6_MAX_SHAPES = 3000` constant, bounded UI
+  Spinbox, defensive clamp, Quality/Ultra quality presets readjusted (2800 /
+  3000).

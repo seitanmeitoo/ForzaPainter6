@@ -1,30 +1,32 @@
-# Forza Painter 6 (refonte native C)
+**🇬🇧 English** | [🇫🇷 Français](../docs/fr/native/README.md)
 
-Implémentation native Windows en C pur. Aucune dépendance externe runtime — un seul `.exe` autonome.
+# Forza Painter 6 (native C rewrite)
+
+Native Windows implementation in pure C. No external runtime dependency — a single standalone `.exe`.
 
 ## Build
 
-Pré-requis : **MSYS2 UCRT64** avec GCC ≥ 13 (`pacman -S --needed base-devel mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-gcc`).
+Requirements: **MSYS2 UCRT64** with GCC ≥ 13 (`pacman -S --needed base-devel mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-gcc`).
 
-Depuis le shell **MSYS2 UCRT64** :
+From the **MSYS2 UCRT64** shell:
 
 ```bash
 cd native
-make release      # produit ./forzapainter6.exe (optimisé -O3 + LTO + AVX natif, sous-système GUI)
-make debug        # build avec symboles -g -O0 (sous-système console, prints visibles)
-make run          # lance l'exe
-make clean        # supprime build/ et l'exe
+make release      # produces ./forzapainter6.exe (optimized -O3 + LTO + native AVX, GUI subsystem)
+make debug        # build with symbols -g -O0 (console subsystem, prints visible)
+make run          # launches the exe
+make clean        # removes build/ and the exe
 ```
 
-`make release` compile aussi `app.rc` via **windres** (fourni avec la toolchain UCRT64) : il
-embarque l'icône (`icon.ico`) et le manifest DPI-aware (`app.manifest`, PerMonitorV2). Le build
-release passe en sous-système Windows GUI (`-mwindows`) → pas de fenêtre console derrière l'app.
-Le build debug garde la console pour voir les `printf`.
+`make release` also compiles `app.rc` via **windres** (bundled with the UCRT64 toolchain): it
+embeds the icon (`icon.ico`) and the DPI-aware manifest (`app.manifest`, PerMonitorV2). The
+release build switches to the Windows GUI subsystem (`-mwindows`) → no console window behind the
+app. The debug build keeps the console to see `printf` output.
 
-Pour régénérer l'icône (formes géométriques translucides) : `py tools/make_icon.py` (nécessite Pillow).
+To regenerate the icon (translucent geometric shapes): `py tools/make_icon.py` (requires Pillow).
 
-## État
+## Status
 
-Refonte quasi terminée.
-Fonctionnalitées faites : fenêtre Win32 + Nuklear/GDI, chargement image, 6 types de formes, scoring,
-engine multi-thread, presets, mode sticker, export JSON FH6, polish distribution (icône + manifest DPI + GUI), color picker fond opaque, parallel hill_climb.
+Rewrite nearly complete.
+Completed features: Win32 + Nuklear/GDI window, image loading, 6 shape types, scoring,
+multi-threaded engine, presets, sticker mode, FH6 JSON export, distribution polish (icon + DPI manifest + GUI), opaque background color picker, parallel hill_climb.

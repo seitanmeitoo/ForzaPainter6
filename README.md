@@ -1,56 +1,57 @@
+**🇬🇧 English** | [🇫🇷 Français](docs/fr/README.md)
+
 # Forza Painter 6
 
-Outil qui convertit une image en formes géométriques (rectangles + ellipses tournées) et les amène dans l'éditeur de vinyles de **Forza Horizon 6** — soit en exportant un JSON, soit en les **injectant directement dans la mémoire du jeu**.
+Tool that converts an image into geometric shapes (rectangles + rotated ellipses) and brings them into the **Forza Horizon 6** livery editor — either by exporting a JSON file, or by **injecting them directly into the game's memory**.
 
-> Application **native Windows en C pur** : un seul `.exe` autonome, GUI Nuklear + GDI, génération CPU multi-thread, aucune dépendance runtime. L'implémentation Python d'origine est conservée dans [legacy/](legacy/) à titre de référence.
+> **Native Windows app written in pure C**: a single standalone `.exe`, Nuklear + GDI GUI, multi-threaded CPU generation, no runtime dependency. The original Python implementation is kept in [legacy/](legacy/) for reference.
 
-## État
+## Status
 
-| Étape | Statut |
+| Step | Status |
 |---|---|
-| Génération image → formes + GUI (natif C) | ✅ fait |
-| Export JSON FH6 | ✅ fait |
-| **Injection mémoire FH6 (étape 2b)** | ✅ fait |
-| Import via contrôle souris (étape 2a) | ❌ abandonné |
-| Génération Python + GUI Tkinter (étape 1) | ✅ archivée dans [legacy/](legacy/) |
+| Image → shapes generation + GUI (native C) | ✅ done |
+| FH6 JSON export | ✅ done |
+| **FH6 memory injection (step 2)** | ✅ done |
+| Python generation + Tkinter GUI (step 1) | ✅ archived in [legacy/](legacy/) |
 
-## Fonctionnalités
+## Features
 
-### Génération
-- Charge n'importe quelle image (PNG / JPG / BMP)
-- Détection automatique du canal alpha. Si l'image est transparente, choix entre :
-  - **Garder la transparence** (mode sticker) : aucune forme posée sur les zones vides
-  - **Remplacer par une couleur opaque** (color picker)
-- **6 presets** de qualité ajustables par sliders ; nombre de formes plafonné à **3000** (limite FH6)
-- **6 types de formes** : rectangles et ellipses tournées (natifs FH6, sans perte) ; cercles, ellipses, carrés tournés, triangles (convertis/approximés à l'export)
-- Génération en arrière-plan avec preview live et progression
+### Generation
+- Loads any image (PNG / JPG / BMP)
+- Automatic alpha channel detection. If the image is transparent, choose between:
+  - **Keep transparency** (sticker mode): no shape placed on empty areas
+  - **Replace with an opaque color** (color picker)
+- **6 quality presets** adjustable via sliders; shape count capped at **3000** (FH6 limit)
+- **6 shape types**: rectangles and rotated ellipses (native to FH6, lossless); circles, ellipses, rotated squares, triangles (converted/approximated on export)
+- Background generation with live preview and progress
 
-### Amener les formes dans FH6
-- **Export JSON** compatible FH6 / forza-painter (`Exporter JSON FH6...`)
-- **Injection mémoire directe (étape 2b)** : écrit les formes dans le processus du jeu via `WriteProcessMemory`, sans saisie manuelle. Localise le groupe de vinyles dynamiquement (empreinte de sphères + fallback RTTI) et **valide avant d'écrire** (refuse si pas de candidat fiable, pour ne pas corrompre l'état du jeu). Offsets confirmés sur FH6 build 354.221, surchargeables sans recompiler.
+### Getting shapes into FH6
+- **JSON export** compatible with FH6 / forza-painter (`Export FH6 JSON...`)
+- **Direct memory injection (step 2)**: writes the shapes into the game process via `WriteProcessMemory`, no manual input needed. Locates the livery group dynamically (sphere fingerprint + RTTI fallback) and **validates before writing** (refuses if no reliable candidate is found, to avoid corrupting game state). Offsets confirmed on FH6 build 354.221, overridable without recompiling.
 
-## Build & lancement
+## Build & run
 
-Pré-requis : **MSYS2 UCRT64** avec GCC. Depuis le shell MSYS2 UCRT64 :
+Requirements: **MSYS2 UCRT64** with GCC. From the MSYS2 UCRT64 shell:
 
 ```bash
 cd native
-make release      # produit ./vinyl-painter.exe (GUI, optimisé -O3 + LTO)
-make run          # lance l'exe
-make debug        # build console avec symboles (prints visibles)
+make release      # produces ./vinyl-painter.exe (GUI, optimized -O3 + LTO)
+make run          # launches the exe
+make debug        # console build with symbols (prints visible)
 ```
 
-Détails (windres, icône, manifest DPI) dans [native/README.md](native/README.md).
+Details (windres, icon, DPI manifest) in [native/README.md](native/README.md).
 
-## Version Python (legacy)
+## Python version (legacy)
 
-L'ancienne application (GUI Tkinter + moteur de génération en Python, accélération GPU CuPy optionnelle) reste fonctionnelle dans [legacy/](legacy/) :
+The old application (Tkinter GUI + Python generation engine, optional CuPy GPU acceleration) remains functional in [legacy/](legacy/):
 
 ```
 pip install -r legacy/requirements.txt
 python legacy/main.py
 ```
 
-## Crédits
+## Credits
 
-Voir [NOTICES.md](NOTICES.md) pour la chaîne complète d'attribution.
+See [NOTICES.md](NOTICES.md) for the full attribution chain.
