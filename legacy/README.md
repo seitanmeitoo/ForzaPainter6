@@ -1,20 +1,22 @@
-# Forza Painter 6 (legacy Python) anciennement vinyl-painter
+**🇬🇧 English** | [🇫🇷 Français](../docs/fr/legacy/README.md)
 
-Outil Python qui convertit une image en formes géométriques (rectangles + ellipses tournées) et exporte un JSON compatible avec l'éditeur de vinyles de **Forza Horizon 6**.
-L'ancienne application (GUI Tkinter + moteur de génération en Python, accélération GPU CuPy optionnelle) reste fonctionnelle.
+# Forza Painter 6 (legacy Python), formerly vinyl-painter
 
-## Fonctionnalités
+Python tool that converts an image into geometric shapes (rectangles + rotated ellipses) and exports a JSON file compatible with the **Forza Horizon 6** livery editor.
+The old application (Tkinter GUI + Python generation engine, optional CuPy GPU acceleration) remains functional.
 
-- Charge n'importe quelle image (PNG / JPG / BMP)
-- Détecte automatiquement le canal alpha. Si l'image est transparente, choix entre :
-  - **Garder la transparence** (mode sticker) : aucune forme n'est posée sur les zones vides
-  - **Remplacer par une couleur opaque** : color picker
-- **6 presets** de qualité (Aperçu, Rapide, Équilibré, Détaillé, Qualité, Ultra qualité), ajustables finement via les sliders ; nombre de formes plafonné à **3000** (limite de l'éditeur FH6)
-- **6 types de formes** sélectionnables :
-  - Natifs FH6 (sans perte à l'export) : rectangles, ellipses tournées — cochés par défaut
-  - Convertis à l'export : cercles, ellipses non tournées (conversion exacte) ; carrés tournés, triangles (approximés par ellipses tournées, perte visuelle signalée par un dialog au save)
-- Génération en arrière-plan avec preview live et barre de progression
-- Sauvegarde du JSON où on veut via `Enregistrer sous…`
+## Features
+
+- Loads any image (PNG / JPG / BMP)
+- Automatically detects the alpha channel. If the image is transparent, choose between:
+  - **Keep transparency** (sticker mode): no shape is placed on empty areas
+  - **Replace with an opaque color**: color picker
+- **6 quality presets** (Preview, Fast, Balanced, Detailed, Quality, Ultra quality), finely adjustable via sliders; shape count capped at **3000** (FH6 editor limit)
+- **6 selectable shape types**:
+  - Native to FH6 (lossless on export): rectangles, rotated ellipses — checked by default
+  - Converted on export: circles, non-rotated ellipses (exact conversion); rotated squares, triangles (approximated by rotated ellipses, visual loss flagged by a dialog on save)
+- Background generation with live preview and progress bar
+- Save the JSON wherever you want via `Save as…`
 
 ## Installation
 
@@ -22,37 +24,37 @@ L'ancienne application (GUI Tkinter + moteur de génération en Python, accélé
 pip install -r requirements.txt
 ```
 
-Python 3.10+ requis (Tkinter inclus dans la stdlib).
+Python 3.10+ required (Tkinter included in the stdlib).
 
-### Accélération GPU (optionnelle, NVIDIA)
+### GPU acceleration (optional, NVIDIA)
 
-Le moteur peut tourner sur GPU CUDA via **CuPy**. CuPy est une dépendance
-optionnelle — l'app fonctionne parfaitement sans, mais la génération est
-~2× plus rapide sur un GPU NVIDIA récent.
+The engine can run on a CUDA GPU via **CuPy**. CuPy is an optional
+dependency — the app works fine without it, but generation is ~2× faster on
+a recent NVIDIA GPU.
 
-Installer le wheel CuPy correspondant à votre version de CUDA Toolkit :
+Install the CuPy wheel matching your CUDA Toolkit version:
 
 ```
 pip install cupy-cuda12x      # CUDA 12.x
-# ou
+# or
 pip install cupy-cuda11x      # CUDA 11.x
 ```
 
-Au lancement de `python main.py`, la checkbox **« Accélération GPU »** dans
-la section Génération est :
+When launching `python main.py`, the **"GPU acceleration"** checkbox in the
+Generation section is:
 
-- **Activable** si CuPy est installé et qu'un GPU NVIDIA est détecté (le nom
-  du GPU est affiché en vert à côté)
-- **Grisée** sinon, avec un message explicite
+- **Enabled** if CuPy is installed and an NVIDIA GPU is detected (the GPU
+  name is shown in green next to it)
+- **Grayed out** otherwise, with an explicit message
 
-> En pratique l'accélération GPU est plus lente que le calcul CPU car le calcul GPU est gérer par le CPU qui envoie ses intruction avec beaucoup plus de latence que le GPU calcul puis attend longtemps pour son prochain calcul.
+> In practice, GPU acceleration is slower than CPU computation because the GPU work is managed by the CPU, which sends its instructions with much more latency than the GPU takes to compute, then waits a long time for its next computation.
 
-## Lancement
+## Running
 
 ```
 python main.py
 ```
 
-## État
+## Status
 
-Version abandonnée.
+Abandoned version.
