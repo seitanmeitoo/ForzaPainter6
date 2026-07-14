@@ -2,6 +2,10 @@
 
 # Forza Painter 6
 
+[![Build](https://github.com/seitanmeitoo/ForzaPainter6/actions/workflows/build.yml/badge.svg)](https://github.com/seitanmeitoo/ForzaPainter6/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/github/license/seitanmeitoo/ForzaPainter6)](../../LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/seitanmeitoo/ForzaPainter6)](https://github.com/seitanmeitoo/ForzaPainter6/releases/latest)
+
 Outil qui convertit une image en formes géométriques (rectangles + ellipses tournées) et les amène dans l'éditeur de vinyles de **Forza Horizon 6** — soit en exportant un JSON, soit en les **injectant directement dans la mémoire du jeu**.
 
 > Application **native Windows en C pur** : un seul `.exe` autonome, GUI Nuklear + GDI, génération CPU multi-thread, aucune dépendance runtime. L'implémentation Python d'origine est conservée dans [legacy/](../../legacy/) à titre de référence.

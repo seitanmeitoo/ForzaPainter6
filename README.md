@@ -2,6 +2,10 @@
 
 # Forza Painter 6
 
+[![Build](https://github.com/seitanmeitoo/ForzaPainter6/actions/workflows/build.yml/badge.svg)](https://github.com/seitanmeitoo/ForzaPainter6/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/github/license/seitanmeitoo/ForzaPainter6)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/seitanmeitoo/ForzaPainter6)](https://github.com/seitanmeitoo/ForzaPainter6/releases/latest)
+
 Tool that converts an image into geometric shapes (rectangles + rotated ellipses) and brings them into the **Forza Horizon 6** livery editor — either by exporting a JSON file, or by **injecting them directly into the game's memory**.
 
 > **Native Windows app written in pure C**: a single standalone `.exe`, Nuklear + GDI GUI, multi-threaded CPU generation, no runtime dependency. The original Python implementation is kept in [legacy/](legacy/) for reference.
