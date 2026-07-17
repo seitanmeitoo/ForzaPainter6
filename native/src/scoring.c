@@ -43,6 +43,26 @@ void scoring_precompute_baseline(const uint8_t *cur, const uint8_t *tgt,
     if (out->n_norm < 1.0) out->n_norm = 1.0;
 }
 
+double scoring_region_diff_sq(const uint8_t *cur, const uint8_t *tgt,
+                               const uint8_t *alpha_mask, int w, const Bbox *bbox)
+{
+    if (bbox_empty(bbox)) return 0.0;
+    double sq = 0.0;
+    for (int y = bbox->y0; y < bbox->y1; ++y) {
+        const uint8_t *arow = alpha_mask ? (alpha_mask + (size_t)y * w) : NULL;
+        const uint8_t *crow = cur + (size_t)y * w * 4u;
+        const uint8_t *trow = tgt + (size_t)y * w * 4u;
+        for (int x = bbox->x0; x < bbox->x1; ++x) {
+            if (arow && arow[x] < 128) continue;
+            int dr = (int)crow[x*4+0] - (int)trow[x*4+0];
+            int dg = (int)crow[x*4+1] - (int)trow[x*4+1];
+            int db = (int)crow[x*4+2] - (int)trow[x*4+2];
+            sq += (double)(dr*dr + dg*dg + db*db);
+        }
+    }
+    return sq;
+}
+
 int compute_optimal_color(const uint8_t *tgt, const uint8_t *cur,
                            const uint8_t *mask, const uint8_t *alpha_mask,
                            int w, int h, const Bbox *bbox,

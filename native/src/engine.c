@@ -484,16 +484,20 @@ void engine_run(Engine *e, EngineCallback on_event, void *user_data,
     const int   STALL_MAX  = 60;
     const float STALL_SHRINK = 0.85f;
     const float SIZE_FLOOR = 0.05f;
+    const int   BASELINE_RESYNC_EVERY = 256;
+
+    /* Baseline maintenue incrementalement (voir bloc commit ci-dessous) au lieu
+     * d'etre recalculee plein-image a chaque iteration : n_norm et alpha_mask ne
+     * changent jamais pendant un run. */
+    ScoringBaseline baseline;
+    scoring_precompute_baseline(e->canvas, e->target, e->alpha_mask,
+                                 e->w, e->h, &baseline);
 
     while (e->shapes_count < e->config.stop_at && !e->cancel) {
         float progress = (float)e->shapes_count / (float)e->config.stop_at;
         float size_scale = size_scale_for_progress(progress);
         for (int s = 0; s < stall; ++s) size_scale *= STALL_SHRINK;
         if (size_scale < SIZE_FLOOR) size_scale = SIZE_FLOOR;
-
-        ScoringBaseline baseline;
-        scoring_precompute_baseline(e->canvas, e->target, e->alpha_mask,
-                                     e->w, e->h, &baseline);
 
         Shape best;
         uint8_t best_rgb[3] = {0, 0, 0};
@@ -530,9 +534,19 @@ void engine_run(Engine *e, EngineCallback on_event, void *user_data,
 
         Bbox bb;
         best.ops->rasterize_mask(&best, e->w, e->h, e->mask, &bb);
+        double old_sq = scoring_region_diff_sq(e->canvas, e->target, e->alpha_mask, e->w, &bb);
         apply_shape(e->canvas, e->w, e->h, e->mask, &bb, best_rgb, (uint8_t)e->alpha_init);
-        e->rms = rms_error(e->canvas, e->target, e->alpha_mask, e->w, e->h);
+        double new_sq = scoring_region_diff_sq(e->canvas, e->target, e->alpha_mask, e->w, &bb);
+        baseline.diff_sq += new_sq - old_sq;
+        if (baseline.diff_sq < 0.0) baseline.diff_sq = 0.0;
         shapes_push(e, &best);
+
+        /* Garde anti-derive : purge le bruit de sommation fp accumule par le delta. */
+        if (e->shapes_count % BASELINE_RESYNC_EVERY == 0) {
+            scoring_precompute_baseline(e->canvas, e->target, e->alpha_mask,
+                                         e->w, e->h, &baseline);
+        }
+        e->rms = sqrt(baseline.diff_sq / baseline.n_norm);
 
         if (on_event) {
             EngineEvent ev = { EE_SHAPE_COMMITTED, e->shapes_count, e->rms };
@@ -543,6 +557,10 @@ void engine_run(Engine *e, EngineCallback on_event, void *user_data,
             }
         }
     }
+
+    /* Resync finale : le rms rapporte a EE_DONE est exact, pas seulement incremental. */
+    scoring_precompute_baseline(e->canvas, e->target, e->alpha_mask, e->w, e->h, &baseline);
+    e->rms = sqrt(baseline.diff_sq / baseline.n_norm);
 
     if (on_event) {
         EngineEvent ev = { EE_DONE, e->shapes_count, e->rms };
