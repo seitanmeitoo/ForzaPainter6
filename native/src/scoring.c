@@ -119,8 +119,8 @@ int compute_optimal_color(const uint8_t *tgt, const uint8_t *cur,
  * compteurs sticker body_total/inside, (ii) les sommes couleur optimale
  * (identique a compute_optimal_color), (iii) masked_old_sq (diffs^2 des
  * pixels couverts par la shape, cf. note ci-dessous). Le rejet sticker est
- * applique apres coup : meme resultat, un candidat rejete ne fait toujours
- * qu'une passe (la fusion ne coute rien de plus qu'avant dans ce cas).
+ * applique apres coup : meme resultat, mais un candidat rejete parcourt quand meme
+ * la bbox en accumulant couleur/masked_old_sq (plus couteux que l'ancien early-return).
  *
  * masked_old_sq ne somme que les pixels ou mrow[x] est vrai (couverts par la
  * shape) : dans la formule originale, region_old_sq parcourait toute la
