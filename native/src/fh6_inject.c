@@ -572,8 +572,8 @@ static int find_in_image(HANDLE h, Region *regs, int nreg,
                          uint64_t *out, int max_out,
                          ScanBuf *sb, const Fh6Progress *prog, int *out_oom)
 {
+    if (out_oom) *out_oom = 0;
     CollectCtx c;
-    c.pat = pat; c.patlen = patlen; c.alignment = alignment;
     c.stop_after = stop_after; c.out = out; c.max_out = max_out; c.n = 0;
     for (int i = 0; i < nreg; ++i) {
         Region *r = &regs[i];
