@@ -234,14 +234,17 @@ static int cmp_region_size_desc(const void *a, const void *b)
     return 0;
 }
 
-/* Enumere les regions committed. Renvoie un tableau malloc (a free), count via out. */
-static Region *enumerate_regions(HANDLE h, int *out_count)
+/* Enumere les regions committed. Renvoie un tableau malloc (a free), count via out.
+ * out_oom : mis a 1 si l'enumeration s'est arretee sur un echec realloc (a distinguer
+ * de "zero region trouvee", qui laisse out_oom a 0). */
+static Region *enumerate_regions(HANDLE h, int *out_count, int *out_oom)
 {
     Region *arr = NULL;
     int cap = 0, n = 0;
     MEMORY_BASIC_INFORMATION mbi;
     uint64_t addr = 0;
     const uint64_t ceiling = 0x7FFFFFFFFFFFULL;
+    if (out_oom) *out_oom = 0;
     while (addr < ceiling) {
         SIZE_T got = VirtualQueryEx(h, (LPCVOID)(uintptr_t)addr, &mbi, sizeof(mbi));
         if (got == 0) break;
@@ -249,7 +252,7 @@ static Region *enumerate_regions(HANDLE h, int *out_count)
             if (n == cap) {
                 int ncap = cap ? cap * 2 : 256;
                 Region *na = (Region *)realloc(arr, (size_t)ncap * sizeof(Region));
-                if (!na) { free(arr); return NULL; }
+                if (!na) { free(arr); if (out_oom) *out_oom = 1; *out_count = 0; return NULL; }
                 arr = na; cap = ncap;
             }
             arr[n].base    = (uint64_t)(uintptr_t)mbi.BaseAddress;
@@ -310,7 +313,9 @@ typedef int (*chunk_cb)(void *ctx, const uint8_t *buf, size_t len,
                         uint64_t cbase, size_t limit);
 
 /* Lit [base, base+size) par chunks et appelle cb. Renvoie 1 si cb a stoppe (trouve),
- * 0 sinon. Honore l'annulation/timeout via prog. Compte les octets lus dans *scanned. */
+ * 0 si rien trouve (scan complet, annulation ou taille nulle), -1 si le scan s'est
+ * arrete sur un echec realloc (OOM) - a distinguer de "rien trouve" par l'appelant.
+ * Honore l'annulation/timeout via prog. Compte les octets lus dans *scanned. */
 static int scan_chunks(HANDLE h, uint64_t base, uint64_t size, size_t overlap,
                        ScanBuf *sb, chunk_cb cb, void *ctx,
                        const Fh6Progress *prog, uint64_t *scanned)
@@ -319,7 +324,7 @@ static int scan_chunks(HANDLE h, uint64_t base, uint64_t size, size_t overlap,
     size_t need = (size_t)SCAN_CHUNK + overlap;
     if (sb->cap < need) {
         uint8_t *nb = (uint8_t *)realloc(sb->buf, need);
-        if (!nb) return 0;
+        if (!nb) return -1;
         sb->buf = nb;
         sb->cap = need;
     }
@@ -479,8 +484,9 @@ static int sphere_chunk_cb(void *vctx, const uint8_t *buf, size_t len,
     return 0;
 }
 
-/* Cherche un CLiveryGroup dont le compteur (u16) vaut count, valide par
- * empreinte stricte. Renvoie 1 + group/table si trouve, 0 sinon. */
+/* Cherche un CLiveryGroup dont le compteur (u16) vaut count, valide par empreinte
+ * stricte. Renvoie 1 + group/table si trouve, 0 si rien trouve, -1 si le scan a
+ * echoue sur un realloc (OOM) - a distinguer de "rien trouve" par l'appelant. */
 static int locate_sphere(Fh6Session *s, int count, ScanBuf *sb,
                          const Fh6Progress *prog, SphereDiag *diag,
                          uint64_t *out_group, uint64_t *out_table)
@@ -488,13 +494,13 @@ static int locate_sphere(Fh6Session *s, int count, ScanBuf *sb,
     HANDLE h = s->handle;
     const Fh6Profile *p = s->profile;
 
-    int nreg = 0;
-    Region *regs = enumerate_regions(h, &nreg);
-    if (!regs) return 0;
+    int nreg = 0, oom = 0;
+    Region *regs = enumerate_regions(h, &nreg, &oom);
+    if (!regs) return oom ? -1 : 0;
     qsort(regs, (size_t)nreg, sizeof(Region), cmp_region_size_desc);
 
     uint64_t *tbl = (uint64_t *)malloc((size_t)count * 8);
-    if (!tbl) { free(regs); return 0; }
+    if (!tbl) { free(regs); return -1; }
 
     SphereCtx ctx;
     ctx.h = h; ctx.p = p; ctx.count = count; ctx.tbl = tbl; ctx.diag = diag;
@@ -504,14 +510,16 @@ static int locate_sphere(Fh6Session *s, int count, ScanBuf *sb,
 
     uint64_t scanned = 0;
     int found = 0;
-    for (int i = 0; i < nreg && !found; ++i) {
+    for (int i = 0; i < nreg && !found && !oom; ++i) {
         Region *r = &regs[i];
         if (!region_readable(r) || !region_writable(r) || region_is_image(r)) continue;
         if (prog_abort(prog)) break;
         ctx.region_base = r->base;
         prog_status(prog, "Empreinte count=%d : region %d/%d (%llu Mo lus)",
                     count, i + 1, nreg, (unsigned long long)(scanned >> 20));
-        if (scan_chunks(h, r->base, r->size, 1, sb, sphere_chunk_cb, &ctx, prog, &scanned)) {
+        int r_scan = scan_chunks(h, r->base, r->size, 1, sb, sphere_chunk_cb, &ctx, prog, &scanned);
+        if (r_scan < 0) { oom = 1; break; }
+        if (r_scan > 0) {
             *out_group = ctx.out_group;
             *out_table = ctx.out_table;
             found = 1;
@@ -519,6 +527,7 @@ static int locate_sphere(Fh6Session *s, int count, ScanBuf *sb,
     }
     free(tbl);
     free(regs);
+    if (oom) return -1;
     return found;
 }
 
@@ -554,23 +563,26 @@ static int collect_chunk_cb(void *vctx, const uint8_t *buf, size_t len,
 }
 
 /* Cherche un motif dans les regions MEM_IMAGE (chunke). Remplit out (cap max_out),
- * renvoie le nombre total trouve (peut depasser max_out). */
+ * renvoie le nombre total trouve (peut depasser max_out). out_oom (si fourni) est
+ * mis a 1 si le scan s'est arrete sur un echec realloc (OOM) plutot que d'avoir
+ * simplement fini/atteint stop_after. */
 static int find_in_image(HANDLE h, Region *regs, int nreg,
                          const uint8_t *pat, size_t patlen,
                          int alignment, int stop_after,
                          uint64_t *out, int max_out,
-                         ScanBuf *sb, const Fh6Progress *prog)
+                         ScanBuf *sb, const Fh6Progress *prog, int *out_oom)
 {
+    if (out_oom) *out_oom = 0;
     CollectCtx c;
-    c.pat = pat; c.patlen = patlen; c.alignment = alignment;
     c.stop_after = stop_after; c.out = out; c.max_out = max_out; c.n = 0;
     for (int i = 0; i < nreg; ++i) {
         Region *r = &regs[i];
         if (!region_is_image(r) || !region_readable(r)) continue;
         if (prog_abort(prog)) break;
-        if (scan_chunks(h, r->base, r->size, patlen - 1, sb,
-                        collect_chunk_cb, &c, prog, NULL))
-            break; /* stop_after atteint */
+        int r_scan = scan_chunks(h, r->base, r->size, patlen - 1, sb,
+                                 collect_chunk_cb, &c, prog, NULL);
+        if (r_scan < 0) { if (out_oom) *out_oom = 1; break; }
+        if (r_scan > 0) break; /* stop_after atteint */
     }
     return c.n;
 }
@@ -582,17 +594,21 @@ static int contains_u64(const uint64_t *a, int n, uint64_t v)
 }
 
 /* Resout les vtables candidates de la classe RTTI (independant du count : a faire
- * une seule fois). Renvoie le nombre (cap max_vt). Remplit diag->string_found. */
+ * une seule fois). Renvoie le nombre (cap max_vt), ou -1 si un scan sous-jacent a
+ * echoue sur un realloc (OOM) - a distinguer de "rien trouve" par l'appelant.
+ * Remplit diag->string_found. */
 static int rtti_find_vtables(HANDLE h, uint64_t base, const Fh6Profile *p,
                              Region *regs, int nreg, uint64_t *vtables, int max_vt,
                              ScanBuf *sb, const Fh6Progress *prog, RttiDiag *diag)
 {
+    int oom = 0;
+
     /* 1. chaine RTTI dans la section image */
     const uint8_t *name = (const uint8_t *)p->rtti_class_name;
     size_t namelen = strlen(p->rtti_class_name);
     uint64_t name_hit = 0;
-    if (find_in_image(h, regs, nreg, name, namelen, 1, 1, &name_hit, 1, sb, prog) < 1)
-        return 0;
+    if (find_in_image(h, regs, nreg, name, namelen, 1, 1, &name_hit, 1, sb, prog, &oom) < 1)
+        return oom ? -1 : 0;
     if (diag) diag->string_found = 1;
     uint64_t type_descriptor = name_hit - 0x10;
     if (type_descriptor < base || type_descriptor > 0x7FFFFFFFFFFFULL) return 0;
@@ -606,8 +622,9 @@ static int rtti_find_vtables(HANDLE h, uint64_t base, const Fh6Profile *p,
     };
     enum { MAX_REFS = 4096 };
     uint64_t *refs = (uint64_t *)malloc(MAX_REFS * sizeof(uint64_t));
-    if (!refs) return 0;
-    int nrefs = find_in_image(h, regs, nreg, rva_pat, 4, 4, 0, refs, MAX_REFS, sb, prog);
+    if (!refs) return -1;
+    int nrefs = find_in_image(h, regs, nreg, rva_pat, 4, 4, 0, refs, MAX_REFS, sb, prog, &oom);
+    if (oom) { free(refs); return -1; }
     if (nrefs > MAX_REFS) nrefs = MAX_REFS;
 
     enum { MAX_COL = 512 };
@@ -625,12 +642,13 @@ static int rtti_find_vtables(HANDLE h, uint64_t base, const Fh6Profile *p,
     /* 3. pointeurs u64 vers chaque COL -> vtable = hit + 8 */
     enum { MAX_PTRS = 4096 };
     uint64_t *ptrs = (uint64_t *)malloc(MAX_PTRS * sizeof(uint64_t));
-    if (!ptrs) return 0;
+    if (!ptrs) return -1;
     int nvt = 0;
     for (int c = 0; c < ncol; ++c) {
         uint8_t col_pat[8];
         for (int b = 0; b < 8; ++b) col_pat[b] = (uint8_t)((cols[c] >> (8 * b)) & 0xFF);
-        int np = find_in_image(h, regs, nreg, col_pat, 8, 8, 0, ptrs, MAX_PTRS, sb, prog);
+        int np = find_in_image(h, regs, nreg, col_pat, 8, 8, 0, ptrs, MAX_PTRS, sb, prog, &oom);
+        if (oom) { free(ptrs); return -1; }
         if (np > MAX_PTRS) np = MAX_PTRS;
         for (int i = 0; i < np && nvt < max_vt; ++i) {
             uint64_t vt = ptrs[i] + 8;
@@ -696,7 +714,9 @@ static int rtti_chunk_cb(void *vctx, const uint8_t *buf, size_t len,
 }
 
 /* Scan du tas pour les objets de vtable RTTI connue, count attendu. vtables est
- * precalcule par rtti_find_vtables (une fois). Renvoie 1 + group/table si trouve. */
+ * precalcule par rtti_find_vtables (une fois). Renvoie 1 + group/table si trouve,
+ * 0 si rien trouve, -1 si le scan a echoue sur un realloc (OOM) - a distinguer de
+ * "rien trouve" par l'appelant. */
 static int rtti_locate(Fh6Session *s, int count, const uint64_t *vtables, int nvt,
                        ScanBuf *sb, const Fh6Progress *prog, RttiDiag *diag,
                        uint64_t *out_group, uint64_t *out_table)
@@ -705,13 +725,13 @@ static int rtti_locate(Fh6Session *s, int count, const uint64_t *vtables, int nv
     const Fh6Profile *p = s->profile;
     if (nvt == 0) return 0;
 
-    int nreg = 0;
-    Region *regs = enumerate_regions(h, &nreg);
-    if (!regs) return 0;
+    int nreg = 0, oom = 0;
+    Region *regs = enumerate_regions(h, &nreg, &oom);
+    if (!regs) return oom ? -1 : 0;
     qsort(regs, (size_t)nreg, sizeof(Region), cmp_region_size_desc);
 
     uint64_t *tbl = (uint64_t *)malloc((size_t)count * 8);
-    if (!tbl) { free(regs); return 0; }
+    if (!tbl) { free(regs); return -1; }
 
     RttiHeapCtx ctx;
     ctx.h = h; ctx.p = p; ctx.count = count; ctx.vtables = vtables; ctx.nvt = nvt;
@@ -719,13 +739,15 @@ static int rtti_locate(Fh6Session *s, int count, const uint64_t *vtables, int nv
 
     uint64_t scanned = 0;
     int found = 0;
-    for (int i = 0; i < nreg && !found; ++i) {
+    for (int i = 0; i < nreg && !found && !oom; ++i) {
         Region *r = &regs[i];
         if (!region_is_private(r) || !region_readable(r) || !region_writable(r)) continue;
         if (prog_abort(prog)) break;
         prog_status(prog, "RTTI count=%d : region %d/%d (%llu Mo lus)",
                     count, i + 1, nreg, (unsigned long long)(scanned >> 20));
-        if (scan_chunks(h, r->base, r->size, 7, sb, rtti_chunk_cb, &ctx, prog, &scanned)) {
+        int r_scan = scan_chunks(h, r->base, r->size, 7, sb, rtti_chunk_cb, &ctx, prog, &scanned);
+        if (r_scan < 0) { oom = 1; break; }
+        if (r_scan > 0) {
             *out_group = ctx.out_group;
             *out_table = ctx.out_table;
             found = 1;
@@ -733,6 +755,7 @@ static int rtti_locate(Fh6Session *s, int count, const uint64_t *vtables, int nv
     }
     free(tbl);
     free(regs);
+    if (oom) return -1;
     return found;
 }
 
@@ -1089,12 +1112,24 @@ int fh6_locate(Fh6Session *s, int want_count, const Fh6Progress *prog,
     {
         prog_status(prog, "Resolution RTTI CLiveryGroup...");
         uint64_t base = module_base(s->pid);
-        int nreg = 0;
-        Region *regs = enumerate_regions(s->handle, &nreg);
+        int nreg = 0, oom = 0;
+        Region *regs = enumerate_regions(s->handle, &nreg, &oom);
+        if (oom) {
+            scanbuf_free(&sb);
+            report_set(report, report_sz, "Memoire insuffisante pendant le scan.");
+            return -4;
+        }
         if (regs) {
-            if (base)
+            if (base) {
                 nvt = rtti_find_vtables(s->handle, base, p, regs, nreg,
                                         vtables, MAX_VT, &sb, prog, &rd);
+                if (nvt < 0) {
+                    free(regs);
+                    scanbuf_free(&sb);
+                    report_set(report, report_sz, "Memoire insuffisante pendant le scan.");
+                    return -4;
+                }
+            }
             free(regs);
         }
         rd.nvt = nvt;
@@ -1107,11 +1142,26 @@ int fh6_locate(Fh6Session *s, int want_count, const Fh6Progress *prog,
         if (count <= 0) continue;
         uint64_t group = 0, table = 0;
         int via_rtti = 0;
-        if (locate_sphere(s, count, &sb, prog, &sd, &group, &table)) {
+        int r_sphere = locate_sphere(s, count, &sb, prog, &sd, &group, &table);
+        if (r_sphere < 0) {
+            scanbuf_free(&sb);
+            report_set(report, report_sz, "Memoire insuffisante pendant le scan.");
+            return -4;
+        }
+        if (r_sphere > 0) {
             via_rtti = 0;
-        } else if (nvt > 0 &&
-                   rtti_locate(s, count, vtables, nvt, &sb, prog, &rd, &group, &table)) {
-            via_rtti = 1;
+        } else if (nvt > 0) {
+            int r_rtti = rtti_locate(s, count, vtables, nvt, &sb, prog, &rd, &group, &table);
+            if (r_rtti < 0) {
+                scanbuf_free(&sb);
+                report_set(report, report_sz, "Memoire insuffisante pendant le scan.");
+                return -4;
+            }
+            if (r_rtti > 0) {
+                via_rtti = 1;
+            } else {
+                continue;
+            }
         } else {
             continue;
         }

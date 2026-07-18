@@ -32,6 +32,17 @@ void scoring_precompute_baseline(const uint8_t *current_rgba,
                                   int w, int h,
                                   ScoringBaseline *out);
 
+/* Somme des diffs^2 (3 canaux) sur le rectangle bbox uniquement, meme skip
+ * alpha_mask < 128 que rms_error. Sert a maintenir ScoringBaseline.diff_sq de
+ * facon incrementale : diff_sq_avant/apres apply_shape sur la meme bbox donne
+ * le delta a appliquer, sans repasser sur toute l'image (les pixels hors bbox
+ * sont inchanges par apply_shape, donc leur contribution est identique et
+ * s'annule dans le delta). */
+double scoring_region_diff_sq(const uint8_t *current_rgba,
+                               const uint8_t *target_rgba,
+                               const uint8_t *alpha_mask,
+                               int w, const Bbox *bbox);
+
 /* Couleur RGB optimale en sommant src_pp = (target - (1-a)*current)/a sur
  * les pixels du masque effectif. En sticker, effective = mask AND alpha_mask. */
 int compute_optimal_color(const uint8_t *target_rgba,

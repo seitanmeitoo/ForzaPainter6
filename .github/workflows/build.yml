@@ -23,15 +23,18 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: false
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-binutils
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
             make
 
+      - name: Run tests
+        run: make test
+
       - name: Build release
-        run: make release CFLAGS_RELEASE="-std=c11 -Wall -Wextra -Isrc -Ivendor -DUNICODE -D_UNICODE -O3 -ffast-math -march=x86-64-v2 -flto -DNDEBUG"
+        run: make release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

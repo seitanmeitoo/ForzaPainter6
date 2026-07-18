@@ -71,6 +71,11 @@ static double        g_engine_start_rms  = 0.0;
 static DWORD         g_engine_t0         = 0;
 static int           g_engine_stop_at    = 0;
 
+/* Buffer RGBA persistant pour le drain de preview (tick_engine_generation) :
+ * evite un malloc+free par frame (~125x/s) quand aucune preview n'est prete. */
+static uint8_t *g_preview_buf     = NULL;
+static size_t   g_preview_buf_cap = 0;
+
 /* Resultat de la derniere generation (snapshot apres engine_free pour
  * permettre l'export FH6 ulterieur). */
 static Shape  *g_result_shapes     = NULL;
@@ -403,6 +408,18 @@ static void install_canvas_into_preview(uint8_t *rgba, int w, int h, const char 
     if (label) snprintf(g_path_utf8, sizeof(g_path_utf8), "%s", label);
 }
 
+/* Assure g_preview_buf >= bytes (realloue si besoin). Renvoie 0 si l'allocation
+ * echoue (appelant doit alors sauter l'usage du buffer, comportement best-effort
+ * deja en place pour le drain de preview). */
+static int ensure_preview_buf(size_t bytes)
+{
+    if (g_preview_buf && g_preview_buf_cap >= bytes) return 1;
+    free(g_preview_buf);
+    g_preview_buf = (uint8_t*)malloc(bytes);
+    g_preview_buf_cap = g_preview_buf ? bytes : 0;
+    return g_preview_buf != NULL;
+}
+
 static void teardown_engine_state(void)
 {
     if (g_engine_active) {
@@ -412,6 +429,7 @@ static void teardown_engine_state(void)
         free(g_engine_target); g_engine_target = NULL;
         g_engine_active = 0;
     }
+    free(g_preview_buf); g_preview_buf = NULL; g_preview_buf_cap = 0;
 }
 
 static void start_engine_generation(HWND owner, int stop_at,
@@ -432,6 +450,8 @@ static void start_engine_generation(HWND owner, int stop_at,
     const int W = g_image.width;
     const int H = g_image.height;
     const size_t bytes = (size_t)W * H * 4u;
+
+    (void)ensure_preview_buf(bytes);  /* best-effort ; retente en lazy dans le tick sinon */
 
     g_engine_target = (uint8_t*)malloc(bytes);
     if (!g_engine_target) {
@@ -516,22 +536,22 @@ static void tick_engine_generation(void)
     const int H = g_engine.h;
     const size_t bytes = (size_t)W * H * 4u;
 
-    /* Drain preview (best-effort). */
-    uint8_t *buf = (uint8_t*)malloc(bytes);
-    if (buf) {
+    /* Drain preview (best-effort). Buffer persistant (g_preview_buf) : pas de
+     * malloc/free par frame quand aucune preview n'est prete (cas courant). */
+    if (ensure_preview_buf(bytes)) {
         int prev_count = 0;
         double prev_rms = 0.0;
-        if (engine_thread_take_preview(&g_engine_thread, buf, &prev_count, &prev_rms)) {
+        if (engine_thread_take_preview(&g_engine_thread, g_preview_buf, &prev_count, &prev_rms)) {
             char lbl[128];
             snprintf(lbl, sizeof(lbl), "[engine : %d / %d formes, RMS %.2f]",
                      prev_count, g_engine_stop_at, prev_rms);
-            install_canvas_into_preview(buf, W, H, lbl);
-            buf = NULL;  /* ownership transferred */
+            install_canvas_into_preview(g_preview_buf, W, H, lbl);
+            g_preview_buf = NULL;  /* ownership transferred */
+            g_preview_buf_cap = 0;
             scoring_report_reset();
             scoring_report_push("En cours : %d/%d", prev_count, g_engine_stop_at);
             scoring_report_push("RMS courant : %.3f", prev_rms);
         }
-        free(buf);
     }
 
     if (engine_thread_done(&g_engine_thread)) {
@@ -542,12 +562,13 @@ static void tick_engine_generation(void)
         DWORD t1           = GetTickCount();
         double dt          = (double)(t1 - g_engine_t0) / 1000.0;
 
-        uint8_t *final_buf = (uint8_t*)malloc(bytes);
-        if (final_buf) {
-            memcpy(final_buf, g_engine.canvas, bytes);
+        if (ensure_preview_buf(bytes)) {
+            memcpy(g_preview_buf, g_engine.canvas, bytes);
             char lbl[64];
             snprintf(lbl, sizeof(lbl), "[engine : %d formes]", final_count);
-            install_canvas_into_preview(final_buf, W, H, lbl);
+            install_canvas_into_preview(g_preview_buf, W, H, lbl);
+            g_preview_buf = NULL;
+            g_preview_buf_cap = 0;
         }
 
         scoring_report_reset();
